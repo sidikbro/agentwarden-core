@@ -1,0 +1,190 @@
+# AgentWarden Rules Configuration
+# ================================
+# Stage 1 deterministic rules — 0.1ms, no LLM required.
+# These rules are the first and fastest line of defence.
+#
+# Edit this file to customise governance without touching Python code.
+# Restart the proxy to apply changes (no rebuild required).
+
+# ── Always-block tool names ─────────────────────────────────────────────────
+# Any tool call with these names is blocked immediately, regardless of arguments.
+# Derived from tools.yaml (always_block: true) but listed here explicitly
+# so operators can audit and adjust without reading tool definitions.
+
+always_block:
+  # Shell execution
+  - exec
+  - execute
+  - bash
+  - shell
+  - run_command
+  - terminal
+  - system
+
+  # Process management
+  - process
+  - kill
+  - sudo
+  - su
+  - chmod
+  - chown
+
+  # Subagent / spawning
+  - sessions_spawn
+  - subagents
+  - spawn
+  - create_agent
+  - delegate
+  - task
+
+# ── Argument patterns ────────────────────────────────────────────────────────
+# Block tool calls whose arguments match any of these patterns.
+# Applied to all tool names (including those not in always_block).
+# Pattern is a Python regex (case-insensitive).
+
+arg_patterns:
+  - pattern: "rm\\s+-rf"
+    description: "Recursive delete"
+    severity: critical
+
+  - pattern: "\\|\\s*bash"
+    description: "Pipe to bash"
+    severity: critical
+
+  - pattern: "\\|\\s*sh\\b"
+    description: "Pipe to sh"
+    severity: critical
+
+  - pattern: "file://"
+    description: "Local file URI — SSRF risk"
+    severity: high
+
+  - pattern: "169\\.254\\.169\\.254"
+    description: "AWS metadata endpoint"
+    severity: critical
+
+  - pattern: "metadata\\.google\\.internal"
+    description: "GCP metadata endpoint"
+    severity: critical
+
+  - pattern: "~/.ssh/"
+    description: "SSH credential path"
+    severity: high
+
+  - pattern: "/etc/passwd"
+    description: "Password file access"
+    severity: high
+
+  - pattern: "/etc/shadow"
+    description: "Shadow file access"
+    severity: critical
+
+  - pattern: "\\.aws/credentials"
+    description: "AWS credentials file"
+    severity: critical
+
+  - pattern: "`[^`]+`"
+    description: "Backtick command injection"
+    severity: high
+
+  - pattern: "\\$\\([^)]+\\)"
+    description: "Command substitution injection"
+    severity: high
+
+  - pattern: "curl\\s+.*\\|\\s*bash"
+    description: "Curl pipe to bash"
+    severity: critical
+
+  - pattern: "/proc/self"
+    description: "Process self-reference"
+    severity: high
+
+  - pattern: "nc\\s+-[el]"
+    description: "Netcat listener / executor"
+    severity: critical
+
+  - pattern: "/dev/tcp/"
+    description: "Bash TCP redirect"
+    severity: critical
+
+  - pattern: "base64\\s+-d"
+    description: "Base64 decode pipe (common in shellcode delivery)"
+    severity: high
+
+# ── Prompt injection patterns ────────────────────────────────────────────────
+# Applied to the system prompt / context when present in the request.
+# Detects adversarial instructions embedded in user or agent messages.
+
+injection_patterns:
+  - pattern: "ignore\\s+(all\\s+)?previous\\s+instructions?"
+    description: "Classic prompt injection"
+    severity: high
+
+  - pattern: "disregard\\s+(all\\s+)?previous"
+    description: "Disregard injection variant"
+    severity: high
+
+  - pattern: "you\\s+are\\s+now\\s+(a\\s+)?DAN"
+    description: "DAN jailbreak mode"
+    severity: high
+
+  - pattern: "jailbreak"
+    description: "Jailbreak keyword"
+    severity: medium
+
+  - pattern: "act\\s+as\\s+(if\\s+you\\s+are\\s+)?unrestricted"
+    description: "Unrestricted agent mode"
+    severity: high
+
+  - pattern: "system\\s+prompt\\s*:"
+    description: "System prompt override attempt"
+    severity: high
+
+  - pattern: "<\\s*system\\s*>"
+    description: "XML system tag injection"
+    severity: high
+
+  - pattern: "pretend\\s+(you\\s+have\\s+)?no\\s+restrictions"
+    description: "No-restrictions prompt"
+    severity: high
+
+  - pattern: "forget\\s+(all\\s+)?previous\\s+(instructions?|context)"
+    description: "Context wipe injection"
+    severity: high
+
+  - pattern: "new\\s+persona\\s*:"
+    description: "Persona override"
+    severity: medium
+
+# ── Classifier skip list ─────────────────────────────────────────────────────
+# Tool calls with these names skip Stage 2 (LLM classifier).
+# Only include tools that are inherently safe regardless of arguments.
+# This keeps latency low for routine operations.
+
+classifier_skip:
+  - read
+  - read_file
+  - memory_get
+  - memory_search
+  - memory_save
+  - session_status
+  - sessions_list
+  - sessions_history
+  - web_search
+  - read_todos
+  - ls
+  - glob
+  - grep
+
+# ── Trust gating ─────────────────────────────────────────────────────────────
+# Some tools require a minimum trust level to be allowed.
+# Trust levels: 0=none 1=low 2=medium 3=high 4=admin
+# The RL policy sets trust dynamically; YAML fallback uses static values.
+
+trust_gates:
+  write:        1   # requires at least low trust
+  edit:         1
+  write_file:   1
+  web_fetch:    1
+  sessions_send: 2
+  cron:         2

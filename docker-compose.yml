@@ -1,0 +1,156 @@
+# Aethelgard Middleware — Local Development Stack
+# =================================================
+#
+# Flow: User → OpenClaw:18789 → Aethelgard:8000 → Ollama:11434
+#
+# Quick start:
+#   cp .env.example .env && docker compose up -d
+
+version: "3.9"
+
+networks:
+  agentwarden_net:
+    name: agentwarden_net
+    driver: bridge
+
+volumes:
+  ollama_models:
+  agentwarden_audit:
+  openclaw_workspace:
+
+services:
+
+  # ── Ollama ─────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agentwarden_ollama
+    networks: [agentwarden_net]
+    ports: ["11434:11434"]
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Aethelgard ─────────────────────────────────────────────────────────────
+  aethelgard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentwarden_proxy
+    networks: [agentwarden_net]
+    ports: ["8000:8000"]
+    volumes:
+      - agentwarden_audit:/app/audit
+      - ./agentwarden.yaml:/app/agentwarden.yaml:ro
+      - ./config:/app/config:ro
+      - ./profiles:/app/profiles:ro
+    environment:
+      - AETHELGARD_RUNTIME=openclaw
+      - AETHELGARD_BACKEND=ollama
+      - AETHELGARD_CONFIG=/app/aethelgard.yaml
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - AETHELGARD_SHADOW_MODE=${AETHELGARD_SHADOW_MODE:-false}
+      - AETHELGARD_LOG_LEVEL=${AETHELGARD_LOG_LEVEL:-INFO}
+      - AETHELGARD_CLASSIFIER_MODEL=${AETHELGARD_CLASSIFIER_MODEL:-qwen2.5:1.5b}
+      - AETHELGARD_SEMANTIC_FILTER=${AETHELGARD_SEMANTIC_FILTER:-false}
+      - AETHELGARD_SEMANTIC_MODEL=${AETHELGARD_SEMANTIC_MODEL:-llama-guard3}
+      - AETHELGARD_DB_PATH=/app/audit/agentwarden_audit.db
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── OpenClaw ───────────────────────────────────────────────────────────────
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: agentwarden_openclaw
+    networks: [agentwarden_net]
+    ports: ["18789:18789"]
+    volumes:
+      - openclaw_workspace:/home/node/.openclaw/workspace
+      - ./config/openclaw.yaml:/app/openclaw-governance.yaml:ro
+    environment:
+      # Route all LLM calls through Aethelgard (Ollama format)
+      - OLLAMA_HOST=http://aethelgard:8000
+      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-gemma4:e4b}
+      - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
+      - OPENCLAW_WORKSPACE=/home/node/.openclaw/workspace
+      - OPENCLAW_LOG_LEVEL=${OPENCLAW_LOG_LEVEL:-info}
+    depends_on:
+      aethelgard:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── NemoClaw (NVIDIA OpenShell sandbox) ────────────────────────────────────
+  # NemoClaw = OpenClaw + NVIDIA OpenShell kernel-level sandbox.
+  # Announced GTC 2026, alpha. Requires NVIDIA GPU on host.
+  #
+  # Aethelgard intercepts at the LLM inference layer — complementary to
+  # NemoClaw's kernel-level egress controls (defence in depth):
+  #   NemoClaw: controls what the sandbox can reach (network/fs/syscalls)
+  #   Aethelgard: controls what the LLM can invoke as tools
+  #
+  # Usage: docker compose --profile nemoclaw up -d
+  #
+  # Prerequisites:
+  #   curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash  # on host
+  #   export NIM_API_KEY=<your-nvidia-api-key>
+  nemoclaw:
+    image: ghcr.io/nvidia/nemoclaw:latest
+    container_name: agentwarden_nemoclaw
+    profiles: [nemoclaw]        # opt-in: docker compose --profile nemoclaw up
+    networks: [agentwarden_net]
+    ports:
+      - "18790:18789"           # NemoClaw gateway (separate port from OpenClaw)
+    volumes:
+      - nemoclaw_workspace:/home/node/.openclaw/workspace
+    environment:
+      # Route all NIM inference calls through Aethelgard
+      # NemoClaw's Privacy Router will forward to Aethelgard,
+      # which then forwards to the actual NIM endpoint.
+      - OPENAI_BASE_URL=http://aethelgard:8000/v1
+      - OPENAI_API_KEY=${NIM_API_KEY:-}
+      # NemoClaw-specific
+      - NIM_API_KEY=${NIM_API_KEY:-}
+      - OPENCLAW_MODEL=${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}
+      - NEMOCLAW_SANDBOX_POLICY=permissive  # start permissive, tighten after testing
+    depends_on:
+      aethelgard:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

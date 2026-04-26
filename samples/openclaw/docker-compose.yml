@@ -1,0 +1,87 @@
+# OpenClaw + Aethelgard Sample
+# ================================
+# Complete setup for governing OpenClaw with Aethelgard.
+#
+# Flow: OpenClaw → Aethelgard:8000 → Ollama:11434
+#
+# Prerequisites:
+#   1. Ollama running on host with at least one model:
+#      ollama pull gemma4:e4b
+#   2. Make Ollama reachable from Docker:
+#      sudo mkdir -p /etc/systemd/system/ollama.service.d/
+#      sudo tee /etc/systemd/system/ollama.service.d/override.conf << 'EOF'
+#      [Service]
+#      Environment="OLLAMA_HOST=0.0.0.0:11434"
+#      EOF
+#      sudo systemctl daemon-reload && sudo systemctl restart ollama
+#   3. Set your OpenClaw token in .env
+#
+# Quick start:
+#   cp .env.example .env   # edit OPENCLAW_TOKEN
+#   docker compose up -d
+#   curl http://localhost:8000/health
+
+version: "3.9"
+
+services:
+
+  # ── Aethelgard — governance middleware ─────────────────────────────────────
+  aethelgard:
+    build:
+      context: ../../    # path to aethelgard-core root
+      dockerfile: Dockerfile
+    container_name: aethelgard_proxy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../aethelgard.yaml:/app/aethelgard.yaml:ro
+      - ../../config:/app/config:ro
+      - aethelgard_audit:/app/audit
+    environment:
+      - AETHELGARD_RUNTIME=openclaw
+      - AETHELGARD_BACKEND=ollama
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - AETHELGARD_SHADOW_MODE=${AETHELGARD_SHADOW_MODE:-false}
+      - AETHELGARD_LOG_LEVEL=${AETHELGARD_LOG_LEVEL:-INFO}
+      - AETHELGARD_CLASSIFIER_MODEL=${AETHELGARD_CLASSIFIER_MODEL:-aethelgard-router}
+      - AETHELGARD_SEMANTIC_FILTER=${AETHELGARD_SEMANTIC_FILTER:-false}
+      - AETHELGARD_SEMANTIC_MODEL=${AETHELGARD_SEMANTIC_MODEL:-llama-guard3}
+      - AETHELGARD_DB_PATH=/app/audit/aethelgard_audit.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── OpenClaw — AI agent runtime ────────────────────────────────────────────
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw_gateway
+    ports:
+      - "18789:18789"
+      - "18790:18790"
+    volumes:
+      - openclaw_config:/home/node/.openclaw
+      - openclaw_workspace:/home/node/.openclaw/workspace
+    environment:
+      - HOME=/home/node
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TOKEN:-}
+    depends_on:
+      aethelgard:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+
+volumes:
+  aethelgard_audit:
+  openclaw_config:
+  openclaw_workspace:

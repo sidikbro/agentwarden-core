@@ -1,0 +1,93 @@
+# AgentWarden Middleware Configuration
+# =====================================
+# AgentWarden is governance middleware — it sits between any agent runtime
+# and any LLM backend. One proxy. Zero code changes to either side.
+#
+# Architecture:
+#   Agent Runtime (OpenClaw, LangGraph, AutoGen...)
+#       ↓  POST /api/chat  or  POST /v1/chat/completions
+#   AgentWarden Proxy :8000
+#       ↓  Stage 1: Rules (0.1ms)
+#       ↓  Stage 2: LLM Classifier (~800ms, skipped for safe tools)
+#       ↓  Stage 3: Semantic Filter (~1s, opt-in)
+#   LLM Backend (Ollama, DeepSeek, OpenAI, vLLM...)
+#
+# Configuration priority (highest to lowest):
+#   1. Environment variables
+#   2. This file
+#   3. Built-in defaults
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+runtime: openclaw   # openclaw | nemoclaw | generic | hermes | deepagents | langgraph
+backend: ollama     # ollama | openai | deepseek | vllm
+
+# ── Governance mode ───────────────────────────────────────────────────────────
+shadow_mode: false
+policy: null
+
+# ── External config files ─────────────────────────────────────────────────────
+# All hand-crafted lists live in config/ — nothing hardcoded in Python.
+config_files:
+  tools:    config/tools.yaml
+  rules:    config/rules.yaml
+  openclaw: config/openclaw.yaml
+
+# ── Pipeline stages ───────────────────────────────────────────────────────────
+stages:
+  rules:
+    enabled: true
+
+  classifier:
+    enabled: true
+    model: qwen2.5:1.5b
+    backend: ollama
+    model_path: null
+    threshold: 0.85
+    timeout_ms: 2000
+
+  semantic_filter:
+    enabled: false
+    model: llama-guard3
+    backend: ollama
+    threshold: 0.7
+    timeout_ms: 5000
+
+  rl_policy:
+    enabled: false
+    model_path: null
+
+# ── Providers ─────────────────────────────────────────────────────────────────
+providers:
+  ollama:
+    base_url: http://localhost:11434
+    keep_alive: -1
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key: null
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key: null
+    model: deepseek-chat
+  vllm:
+    base_url: http://localhost:8080/v1
+
+  # NVIDIA NIM (NemoClaw default inference backend)
+  nvidia_nim:
+    base_url: https://integrate.api.nvidia.com/v1   # cloud NIM
+    # base_url: http://localhost:8000/v1             # local NIM container
+    api_key: null              # reads NIM_API_KEY env var
+    default_model: nvidia/nemotron-3-super-120b-a12b
+
+# ── Audit ─────────────────────────────────────────────────────────────────────
+audit:
+  enabled: true
+  db_path: ~/.agentwarden/audit/agentwarden_audit.db
+  log_allowed: true
+  log_blocked: true
+
+# ── Server ────────────────────────────────────────────────────────────────────
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1
+  log_level: INFO

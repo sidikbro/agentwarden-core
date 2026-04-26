@@ -1,0 +1,152 @@
+# AgentWarden — OpenClaw Runtime Configuration
+# =============================================
+# This file configures how AgentWarden integrates with OpenClaw specifically.
+# Referenced by docker-compose.yml and the CLI when runtime=openclaw.
+#
+# OpenClaw architecture:
+#   OpenClaw Gateway (port 18789) → AgentWarden (port 8000) → Ollama (port 11434)
+#
+# OpenClaw sends LLM requests in two formats depending on config:
+#   - Ollama format:  POST /api/chat           (default)
+#   - OpenAI format:  POST /v1/chat/completions (if OPENAI_BASE_URL set)
+# AgentWarden handles both.
+
+runtime: openclaw
+
+# ── OpenClaw connection ──────────────────────────────────────────────────────
+openclaw:
+  gateway_url: http://openclaw:18789     # internal Docker network
+  gateway_port: 18789
+  workspace: /home/node/.openclaw/workspace
+
+  # The model OpenClaw uses — AgentWarden intercepts calls to ANY model.
+  # This is just metadata for logging; AgentWarden doesn't enforce model choice.
+  default_model: gemma4:e4b
+
+  # OpenClaw auth token — set to your actual token
+  # Generate with: openclaw token create --name agentwarden-governed
+  auth_token: "${OPENCLAW_TOKEN}"        # reads from env
+
+  # How OpenClaw addresses the AgentWarden proxy
+  # This is set in OpenClaw's environment as OPENAI_BASE_URL or OLLAMA_HOST
+  proxy_address: http://agentwarden:8000
+
+# ── Tool scope for OpenClaw sessions ────────────────────────────────────────
+# Defines which tools are exposed to the agent per task type.
+# The RL policy refines these at runtime; this is the static fallback.
+#
+# Task types map to AGENTS.md profiles injected into the OpenClaw workspace.
+
+task_profiles:
+
+  summarisation:
+    description: "Read files and produce summaries"
+    allowed_tools:
+      - read
+      - read_file
+      - memory_get
+      - memory_search
+      - web_search       # allow for citation lookup
+    blocked_tools:
+      - exec
+      - write
+      - sessions_spawn
+      - cron
+
+  research:
+    description: "Web research and information gathering"
+    allowed_tools:
+      - web_search
+      - web_fetch
+      - read
+      - memory_get
+      - memory_search
+      - memory_save
+    blocked_tools:
+      - exec
+      - sessions_spawn
+      - cron
+
+  coding:
+    description: "Code reading, writing, and editing — NO execution"
+    allowed_tools:
+      - read
+      - read_file
+      - write
+      - write_file
+      - edit
+      - ls
+      - glob
+      - grep
+      - web_search
+      - memory_get
+    blocked_tools:
+      - exec             # always blocked regardless of profile
+      - bash
+      - shell
+      - sessions_spawn
+
+  file_management:
+    description: "File reading, organising, and writing"
+    allowed_tools:
+      - read
+      - read_file
+      - write
+      - write_file
+      - edit
+      - ls
+      - glob
+      - grep
+    blocked_tools:
+      - exec
+      - sessions_spawn
+
+  general:
+    description: "General assistant — standard tool set"
+    allowed_tools:
+      - read
+      - read_file
+      - write
+      - write_file
+      - edit
+      - web_search
+      - web_fetch
+      - memory_get
+      - memory_search
+      - memory_save
+      - sessions_list
+      - sessions_history
+      - sessions_send
+      - session_status
+      - cron
+    blocked_tools:
+      - exec             # always blocked
+      - bash
+      - shell
+      - sessions_spawn
+      - subagents
+      - create_agent
+
+# ── AGENTS.md injection template ─────────────────────────────────────────────
+# AgentWarden injects a governance preamble into the OpenClaw workspace
+# AGENTS.md file. This communicates tool scope at the semantic level —
+# the agent self-reports its capabilities correctly.
+#
+# Variables expanded: {task_type}, {allowed_tools}, {session_id}
+
+agents_md_preamble: |
+  ## AgentWarden Governance Context
+  This session is governed by AgentWarden capability governance middleware.
+  Task type: {task_type}
+  Session ID: {session_id}
+
+  ### Available Tools
+  You have access ONLY to the following tools in this session:
+  {allowed_tools_list}
+
+  Tools not in this list are not available to you.
+  Do not attempt to use unlisted tools — calls will be blocked.
+
+  ### Governance Note
+  All tool calls are monitored. The AgentWarden Safety Router will block
+  any call that falls outside the governed scope for this session.

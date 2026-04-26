@@ -1,0 +1,97 @@
+# AgentWarden Core — .gitignore
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ── Secrets and credentials ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example        # keep the example, never the real one
+*.key
+*.pem
+*.p12
+secrets.yaml
+secrets.json
+
+# ── Audit database ────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+audit/
+
+# ── Model weights ─────────────────────────────────────────────────────────────
+models/
+*.zip
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+.docker/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Research / training artifacts (stay in private research repo) ─────────────
+data/
+results/
+runs/
+wandb/
+scripts/train_*.py
+scripts/ablation_*.py
+scripts/extract_*.py

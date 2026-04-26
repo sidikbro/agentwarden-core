@@ -1,0 +1,269 @@
+# AgentWarden Tool Registry
+# =========================
+# Defines every tool that OpenClaw exposes, with:
+#   - risk_level:  0=safe  1=low  2=medium  3=high  4=critical
+#   - categories:  used by classifier and RL policy for grouping
+#   - description: forwarded to LLM in tool-call schema
+#
+# This file is the single source of truth for tool governance.
+# Rules, classifier skip lists, and RL policy all reference these names.
+# Add new tools here first — governance policy follows automatically.
+
+tools:
+
+  # ── Read-only / safe ────────────────────────────────────────────────────────
+  read:
+    description: "Read file contents from the workspace"
+    risk_level: 0
+    categories: [filesystem, read_only]
+    always_allow: true
+
+  read_file:
+    description: "Read a file by path"
+    risk_level: 0
+    categories: [filesystem, read_only]
+    always_allow: true
+
+  ls:
+    description: "List directory contents"
+    risk_level: 0
+    categories: [filesystem, read_only]
+    always_allow: true
+
+  glob:
+    description: "Find files matching a pattern"
+    risk_level: 0
+    categories: [filesystem, read_only]
+    always_allow: true
+
+  grep:
+    description: "Search file contents for a pattern"
+    risk_level: 0
+    categories: [filesystem, read_only]
+    always_allow: true
+
+  memory_get:
+    description: "Read from agent memory store"
+    risk_level: 0
+    categories: [memory, read_only]
+    always_allow: true
+
+  memory_search:
+    description: "Semantic search over agent memory"
+    risk_level: 0
+    categories: [memory, read_only]
+    always_allow: true
+
+  session_status:
+    description: "Show current session status and usage"
+    risk_level: 0
+    categories: [session, read_only]
+    always_allow: true
+
+  # ── Web / network — read ────────────────────────────────────────────────────
+  web_search:
+    description: "Search the web for information"
+    risk_level: 1
+    categories: [network, read_only]
+    classifier_skip: true    # low risk, skip LLM classification
+
+  web_fetch:
+    description: "Fetch and extract content from a URL"
+    risk_level: 2
+    categories: [network]
+    arg_watch:
+      - pattern: "file://"
+        reason: "Local file URI — potential SSRF"
+        block: true
+      - pattern: "169\\.254\\.169\\.254"
+        reason: "AWS metadata endpoint"
+        block: true
+      - pattern: "metadata\\.google"
+        reason: "GCP metadata endpoint"
+        block: true
+
+  # ── File write ──────────────────────────────────────────────────────────────
+  write:
+    description: "Create or overwrite a file in the workspace"
+    risk_level: 2
+    categories: [filesystem, write]
+    arg_watch:
+      - pattern: "curl\\s+.*\\|\\s*bash"
+        reason: "Curl pipe to bash pattern"
+        block: true
+
+  write_file:
+    description: "Write content to a file"
+    risk_level: 2
+    categories: [filesystem, write]
+
+  edit:
+    description: "Make precise edits to an existing file"
+    risk_level: 2
+    categories: [filesystem, write]
+
+  # ── Memory write ────────────────────────────────────────────────────────────
+  memory_save:
+    description: "Save information to agent memory"
+    risk_level: 1
+    categories: [memory, write]
+
+  # ── Scheduling / automation ─────────────────────────────────────────────────
+  cron:
+    description: "Manage scheduled cron jobs"
+    risk_level: 2
+    categories: [automation]
+
+  # ── Session / agent management ──────────────────────────────────────────────
+  sessions_list:
+    description: "List active sessions"
+    risk_level: 1
+    categories: [session, read_only]
+
+  sessions_history:
+    description: "Fetch history for another session"
+    risk_level: 1
+    categories: [session, read_only]
+
+  sessions_send:
+    description: "Send a message to another session"
+    risk_level: 2
+    categories: [session, messaging]
+
+  sessions_spawn:
+    description: "Spawn a subagent or isolated session"
+    risk_level: 4
+    categories: [session, execution]
+    always_block: true
+    block_reason: "Subagent spawning always blocked — requires explicit governance elevation"
+
+  subagents:
+    description: "Manage sub-agent runs"
+    risk_level: 4
+    categories: [session, execution]
+    always_block: true
+
+  sessions_yield:
+    description: "End current turn and yield to subagent result"
+    risk_level: 2
+    categories: [session]
+
+  # ── Code execution ──────────────────────────────────────────────────────────
+  exec:
+    description: "Execute shell commands"
+    risk_level: 4
+    categories: [execution, shell]
+    always_block: true
+    block_reason: "Shell execution always blocked — requires explicit governance elevation"
+    arg_watch:
+      - pattern: "rm\\s+-rf"
+        reason: "Recursive delete"
+        block: true
+      - pattern: "\\|\\s*bash"
+        reason: "Pipe to bash"
+        block: true
+      - pattern: "\\|\\s*sh\\b"
+        reason: "Pipe to sh"
+        block: true
+      - pattern: "`[^`]+`"
+        reason: "Backtick injection"
+        block: true
+      - pattern: "\\$\\([^)]+\\)"
+        reason: "Command substitution"
+        block: true
+
+  execute:
+    description: "Execute code or commands"
+    risk_level: 4
+    categories: [execution]
+    always_block: true
+
+  bash:
+    description: "Run bash commands"
+    risk_level: 4
+    categories: [execution, shell]
+    always_block: true
+
+  shell:
+    description: "Run shell commands"
+    risk_level: 4
+    categories: [execution, shell]
+    always_block: true
+
+  run_command:
+    description: "Run a system command"
+    risk_level: 4
+    categories: [execution]
+    always_block: true
+
+  terminal:
+    description: "Open or use a terminal"
+    risk_level: 4
+    categories: [execution, shell]
+    always_block: true
+
+  system:
+    description: "System-level operations"
+    risk_level: 4
+    categories: [execution, system]
+    always_block: true
+
+  process:
+    description: "Manage background processes"
+    risk_level: 3
+    categories: [execution, process]
+    always_block: true
+
+  kill:
+    description: "Kill a process"
+    risk_level: 3
+    categories: [execution, process]
+    always_block: true
+
+  sudo:
+    description: "Run command with elevated privileges"
+    risk_level: 4
+    categories: [execution, privilege]
+    always_block: true
+
+  su:
+    description: "Switch user"
+    risk_level: 4
+    categories: [execution, privilege]
+    always_block: true
+
+  chmod:
+    description: "Change file permissions"
+    risk_level: 3
+    categories: [filesystem, privilege]
+    always_block: true
+
+  chown:
+    description: "Change file ownership"
+    risk_level: 3
+    categories: [filesystem, privilege]
+    always_block: true
+
+  spawn:
+    description: "Spawn a new process or agent"
+    risk_level: 4
+    categories: [execution]
+    always_block: true
+
+  task:
+    description: "Create or delegate a task"
+    risk_level: 3
+    categories: [automation]
+    always_block: true
+
+  delegate:
+    description: "Delegate work to another agent"
+    risk_level: 3
+    categories: [automation]
+    always_block: true
+
+  create_agent:
+    description: "Create a new agent instance"
+    risk_level: 4
+    categories: [execution]
+    always_block: true
