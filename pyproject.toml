@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aethelgard"
+version = "0.3.0"
+description = "Governance middleware for autonomous AI agents"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "click>=8.1",
+    "aiosqlite>=0.20.0",
+    "rich>=13.0",
+    "stable-baselines3>=2.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+enterprise = [
+    "stable-baselines3>=2.0",
+    "torch>=2.0",
+    "numpy>=1.24",
+]
+all = ["aethelgard[dev]"]
+
+[project.scripts]
+aethelgard = "aethelgard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aethelgard*"]
