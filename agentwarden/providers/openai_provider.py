@@ -15,9 +15,7 @@ class OpenAIProvider(LLMProvider):
     async def forward(self, request_body, headers=None, timeout=120.0):
         api_key = os.getenv("OPENAI_API_KEY","")
         h = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        safe_headers = {k: v for k, v in (headers or {}).items()
-                       if k.lower() not in ("authorization", "content-length", "host")}
-        h.update(safe_headers)
+        h.update(headers or {})
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", json=request_body, headers=h)
             resp.raise_for_status()
@@ -31,10 +29,7 @@ class DeepSeekProvider(OpenAIProvider):
     async def forward(self, request_body, headers=None, timeout=120.0):
         api_key = os.getenv("DEEPSEEK_API_KEY","")
         h = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        # Strip incoming auth headers — use our backend key, not the agent's fake key
-        safe_headers = {k: v for k, v in (headers or {}).items()
-                       if k.lower() not in ("authorization", "content-length", "host")}
-        h.update(safe_headers)
+        h.update(headers or {})
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", json=request_body, headers=h)
             resp.raise_for_status()

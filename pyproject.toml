@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aethelgard"
+name = "agentwarden"
 version = "0.3.0"
 description = "Governance middleware for autonomous AI agents"
 requires-python = ">=3.11"
@@ -32,11 +32,11 @@ enterprise = [
     "torch>=2.0",
     "numpy>=1.24",
 ]
-all = ["aethelgard[dev]"]
+all = ["agentwarden[dev]"]
 
 [project.scripts]
-aethelgard = "aethelgard.cli:main"
+agentwarden = "agentwarden.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aethelgard*"]
+include = ["agentwarden*"]

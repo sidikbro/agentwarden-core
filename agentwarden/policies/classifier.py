@@ -33,8 +33,6 @@ logger = logging.getLogger("agentwarden.policies.classifier")
 SKIP_CLASSIFIER_TOOLS = {
     "read", "read_file", "memory_search", "memory_get",
     "web_search", "read_todos", "ls", "glob", "grep",
-    "write", "write_file", "edit", "edit_file", "write_todos",
-    "session_status", "sessions_list", "sessions_history",
 }
 
 # Classifier threshold — calls above this confidence are blocked

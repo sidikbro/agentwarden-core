@@ -1,7 +1,7 @@
-# Aethelgard Middleware — Local Development Stack
+# AgentWarden Middleware — Local Development Stack
 # =================================================
 #
-# Flow: User → OpenClaw:18789 → Aethelgard:8000 → Ollama:11434
+# Flow: User → OpenClaw:18789 → AgentWarden:8000 → Ollama:11434
 #
 # Quick start:
 #   cp .env.example .env && docker compose up -d
@@ -47,8 +47,8 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── Aethelgard ─────────────────────────────────────────────────────────────
-  aethelgard:
+  # ── AgentWarden ─────────────────────────────────────────────────────────────
+  agentwarden:
     build:
       context: .
       dockerfile: Dockerfile
@@ -61,16 +61,16 @@ services:
       - ./config:/app/config:ro
       - ./profiles:/app/profiles:ro
     environment:
-      - AETHELGARD_RUNTIME=openclaw
-      - AETHELGARD_BACKEND=ollama
-      - AETHELGARD_CONFIG=/app/aethelgard.yaml
+      - AGENTWARDEN_RUNTIME=openclaw
+      - AGENTWARDEN_BACKEND=ollama
+      - AGENTWARDEN_CONFIG=/app/agentwarden.yaml
       - OLLAMA_BASE_URL=http://ollama:11434
-      - AETHELGARD_SHADOW_MODE=${AETHELGARD_SHADOW_MODE:-false}
-      - AETHELGARD_LOG_LEVEL=${AETHELGARD_LOG_LEVEL:-INFO}
-      - AETHELGARD_CLASSIFIER_MODEL=${AETHELGARD_CLASSIFIER_MODEL:-qwen2.5:1.5b}
-      - AETHELGARD_SEMANTIC_FILTER=${AETHELGARD_SEMANTIC_FILTER:-false}
-      - AETHELGARD_SEMANTIC_MODEL=${AETHELGARD_SEMANTIC_MODEL:-llama-guard3}
-      - AETHELGARD_DB_PATH=/app/audit/agentwarden_audit.db
+      - AGENTWARDEN_SHADOW_MODE=${AGENTWARDEN_SHADOW_MODE:-false}
+      - AGENTWARDEN_LOG_LEVEL=${AGENTWARDEN_LOG_LEVEL:-INFO}
+      - AGENTWARDEN_CLASSIFIER_MODEL=${AGENTWARDEN_CLASSIFIER_MODEL:-qwen2.5:1.5b}
+      - AGENTWARDEN_SEMANTIC_FILTER=${AGENTWARDEN_SEMANTIC_FILTER:-false}
+      - AGENTWARDEN_SEMANTIC_MODEL=${AGENTWARDEN_SEMANTIC_MODEL:-llama-guard3}
+      - AGENTWARDEN_DB_PATH=/app/audit/agentwarden_audit.db
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
     depends_on:
       ollama:
@@ -93,14 +93,14 @@ services:
       - openclaw_workspace:/home/node/.openclaw/workspace
       - ./config/openclaw.yaml:/app/openclaw-governance.yaml:ro
     environment:
-      # Route all LLM calls through Aethelgard (Ollama format)
-      - OLLAMA_HOST=http://aethelgard:8000
+      # Route all LLM calls through AgentWarden (Ollama format)
+      - OLLAMA_HOST=http://agentwarden:8000
       - OPENCLAW_MODEL=${OPENCLAW_MODEL:-gemma4:e4b}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
       - OPENCLAW_WORKSPACE=/home/node/.openclaw/workspace
       - OPENCLAW_LOG_LEVEL=${OPENCLAW_LOG_LEVEL:-info}
     depends_on:
-      aethelgard:
+      agentwarden:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -114,10 +114,10 @@ services:
   # NemoClaw = OpenClaw + NVIDIA OpenShell kernel-level sandbox.
   # Announced GTC 2026, alpha. Requires NVIDIA GPU on host.
   #
-  # Aethelgard intercepts at the LLM inference layer — complementary to
+  # AgentWarden intercepts at the LLM inference layer — complementary to
   # NemoClaw's kernel-level egress controls (defence in depth):
   #   NemoClaw: controls what the sandbox can reach (network/fs/syscalls)
-  #   Aethelgard: controls what the LLM can invoke as tools
+  #   AgentWarden: controls what the LLM can invoke as tools
   #
   # Usage: docker compose --profile nemoclaw up -d
   #
@@ -134,17 +134,17 @@ services:
     volumes:
       - nemoclaw_workspace:/home/node/.openclaw/workspace
     environment:
-      # Route all NIM inference calls through Aethelgard
-      # NemoClaw's Privacy Router will forward to Aethelgard,
+      # Route all NIM inference calls through AgentWarden
+      # NemoClaw's Privacy Router will forward to AgentWarden,
       # which then forwards to the actual NIM endpoint.
-      - OPENAI_BASE_URL=http://aethelgard:8000/v1
+      - OPENAI_BASE_URL=http://agentwarden:8000/v1
       - OPENAI_API_KEY=${NIM_API_KEY:-}
       # NemoClaw-specific
       - NIM_API_KEY=${NIM_API_KEY:-}
       - OPENCLAW_MODEL=${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}
       - NEMOCLAW_SANDBOX_POLICY=permissive  # start permissive, tighten after testing
     depends_on:
-      aethelgard:
+      agentwarden:
         condition: service_healthy
     deploy:
       resources:
