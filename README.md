@@ -58,7 +58,7 @@ SER (Skill Economy Ratio) improvement: **+191%** ablation / **10.5×** real sess
 **No Docker, no local models required for the demo.**
 
 ```bash
-pip install agentwarden-core
+pip install agentwarden-core (coming soon)
 
 export DEEPSEEK_API_KEY=your_key
 
