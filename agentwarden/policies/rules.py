@@ -211,7 +211,7 @@ class RuleBasedPolicy(PolicyPlugin):
                 )
 
         # ── Check 3: injection patterns (on context/system prompt) ────────────
-        context_str = request.context.system_prompt[:2000] if request.context else ""
+        context_str = getattr(request.context, "system_prompt", "") or ""
         for pat, desc in self._inj_pats:
             if pat.search(context_str):
                 return GovernanceDecision(
