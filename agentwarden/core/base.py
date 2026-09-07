@@ -39,4 +39,5 @@ class GovernanceProfile(ABC):
     def get_trust_level(self, context: GovernanceContext) -> float: return 0.5
     def to_agents_md(self, context: GovernanceContext) -> str:
         allowed = sorted(self.get_allowed_tools(context))
-        return f"# AgentWarden Governance Active\nProfile: {self.name}\nAvailable tools: {\', \'.join(allowed)}.\n"
+        joined = ', '.join(allowed)
+        return f"# AgentWarden Governance Active\nProfile: {self.name}\nAvailable tools: {joined}.\n"

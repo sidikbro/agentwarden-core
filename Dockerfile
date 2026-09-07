@@ -21,5 +21,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-ENTRYPOINT ["agentwarden"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "agentwarden serve --host 0.0.0.0 --port 8000 --runtime ${AGENTWARDEN_RUNTIME:-generic} --backend ${AGENTWARDEN_BACKEND:-ollama}"]
