@@ -61,7 +61,7 @@ Superseded figures (10.5x, "~9.3x", 100% TPR/0% FPR, N=500) remain **STRUCK** �
 | Field | Value |
 |---|---|
 | Artifact | `scripts/report_baselines.py` |
-| Commit | `<pending — see commit following this table edit>` (`scripts/report_baselines.py`, `benchmark/metrics.py`) |
+| Commit | `417da06` (`scripts/report_baselines.py`, `benchmark/metrics.py`) |
 | Command | `python3 -m scripts.report_baselines` |
 | Metric definitions | `task_success` — `benchmark/metrics.py:15`; `invocation_fpr`/`invocation_fnr` — `benchmark/metrics.py:141`/`149`; `required_tool_omission_rate` — `benchmark/metrics.py` (see its docstring: structurally 0.0 for every scripted baseline, by construction); others as in §1/§2 above |
 
