@@ -201,6 +201,7 @@ The pilot's specific finding does not hold up at scale for `qwen2.5:3b`. **Per e
 |---|---|
 | `task_success` | `benchmark/metrics.py:15` |
 | `required_tool_denial_rate` | `benchmark/metrics.py:72` |
+| `required_tool_omission_rate` | `benchmark/metrics.py` (structurally 0.0 for every scripted baseline — see §3 and §5) |
 | `unnecessary_exposure_ratio` | `benchmark/metrics.py:94` |
 | `exposure_precision_recall` | `benchmark/metrics.py:103` |
 | `revocation_lag` | `benchmark/metrics.py:112` |
@@ -210,6 +211,33 @@ The pilot's specific finding does not hold up at scale for `qwen2.5:3b`. **Per e
 | `added_latency_ms` | `benchmark/metrics.py:186` |
 | `classifier_routing_fraction` | `benchmark/metrics.py:197` |
 | Track C `not_expose_everything` / `not_expose_nothing` / `g3_rename_invariant` | `benchmark/degeneracy_gate.py` |
+
+---
+
+## 11. Track A (benchmark expansion) and Track B (D2 classifier pilot) status
+
+### 11a. Track A — batch 1
+
+| Field | Value |
+|---|---|
+| Artifact | `benchmark/tasks/{research_synth,repo_triage,incident_response}.py` (v3 added to each), `docs/v2/BENCHMARK_EXPANSION_MANIFEST.md` |
+| Commit | `02801eb` |
+| Command | `python3 -m pytest tests/test_task_families.py -v` |
+| Result | 10 → 13 instances. All 13 pass all 5 `validate.py` checks (v1/v2 unaffected). |
+| Status | **VERIFIED** (checks pass, this pass). **review_status=PENDING** per §4a's protocol — a human has not yet read the actual task/ground-truth/oracle-plan content. Not usable in any reported baseline row until that happens; do not silently fold batch 1's 3 instances into a future "N=13" baseline table without noting they're unreviewed. |
+
+### 11b. Track B — classifier pilot
+
+| Field | Value |
+|---|---|
+| Artifact | `router_training/train_pilot.py` |
+| Commit | first version `02801eb`; memory-resilience fixes (bf16, batch=1 + grad accumulation, gradient checkpointing, checkpoint every 10 steps, auto-resume) made this pass, not yet committed as of this table edit |
+| Command | `python3 -m router_training.train_pilot 40` |
+| Attempt 1 result | Killed by the host's low-memory guard at step 25/40 (loss had dropped cleanly 5.49 → 1.61, confirming the training loop itself works correctly up to that point). **No checkpoint was saved** — the first version used `save_strategy="no"`, writing only at the very end, so the kill lost all 25 steps of progress. `free -h` at the time showed ~10GB/15GB swap in use; this is a shared desktop (VS Code + Chrome + several renderer processes already resident), not a dedicated training host, and the training process pushed it over the edge. |
+| Root cause | Host memory pressure, not a bug in the training code and not a data problem. Confirmed via `free -h`/`ps aux --sort=-%mem` at the time of the kill — the desktop's own processes were already using the majority of RAM before training started. |
+| Status | **BLOCKED, by explicit user choice — not a failure to resolve.** Asked the user how to proceed (retry now / wait / abandon); answer was **wait until memory frees up**. The script is fixed for when that happens (see Commit) but was not relaunched this pass. `data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/` exists but is empty (nothing survived the kill). Retry when asked; do not relaunch proactively. |
+
+**Both tracks are explicitly open, not silently dropped** — Track A needs human review of batch 1 before it can grow or be used; Track B needs either more free memory on this host or a different host with a compatible GPU before a pilot checkpoint can exist to smoke-test.
 
 ---
 

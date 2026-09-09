@@ -121,7 +121,13 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=torch.float32)
+    # bfloat16, not float32: this environment is memory-constrained (a
+    # shared desktop, not a dedicated training box -- the first pilot run
+    # was killed by the system's low-memory guard at step 25/40, mid-swap
+    # thrash, while VS Code/Chrome were also running). Halves the base
+    # model's resident footprint; LoRA-only training doesn't need fp32
+    # precision on the frozen base weights.
+    model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, dtype=torch.bfloat16)
     print(f"  loaded in {time.time() - t0:.0f}s")
 
     lora_config = LoraConfig(
@@ -130,12 +136,13 @@ def main() -> None:
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, lora_config)
+    model.gradient_checkpointing_enable()
     model.print_trainable_parameters()
 
     def tokenize(example):
         prompt, target = example["prompt"], example["target"]
         full = prompt + "\n" + target + tokenizer.eos_token
-        enc = tokenizer(full, truncation=True, max_length=384, padding="max_length")
+        enc = tokenizer(full, truncation=True, max_length=256, padding="max_length")
         enc["labels"] = list(enc["input_ids"])
         return enc
 
@@ -144,21 +151,37 @@ def main() -> None:
 
     training_args = TrainingArguments(
         output_dir=str(OUT_DIR),
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=2,   # effective batch size 2, half the peak memory of batch_size=2 directly
         num_train_epochs=1,
         max_steps=max_steps,
         learning_rate=2e-4,
         logging_steps=5,
-        save_strategy="no",
+        # Periodic checkpointing: the first pilot run was killed mid-training
+        # by the system's low-memory guard and lost all progress, because
+        # save_strategy="no" meant nothing was written until trainer.train()
+        # returned. Saving every 10 steps means a kill loses at most 10
+        # steps of progress, not the whole run -- and a killed run can be
+        # smoke-tested from its last checkpoint instead of restarting cold.
+        save_strategy="steps",
+        save_steps=10,
+        save_total_limit=1,
         report_to=[],
         use_cpu=True,
     )
 
     trainer = Trainer(model=model, args=training_args, train_dataset=dataset)
 
+    resume_ckpt = None
+    if OUT_DIR.exists():
+        checkpoints = sorted(OUT_DIR.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[-1]))
+        if checkpoints:
+            resume_ckpt = str(checkpoints[-1])
+            print(f"Resuming from {resume_ckpt} (a prior run left this checkpoint)")
+
     print(f"Training for max_steps={max_steps} on {len(dataset)} examples (CPU, this will be slow)...")
     t0 = time.time()
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_ckpt)
     print(f"Training finished in {time.time() - t0:.0f}s")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
