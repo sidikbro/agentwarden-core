@@ -4,13 +4,14 @@ import copy
 
 from agentwarden.core.models import Decision, GovernanceDecision, ToolCall
 from benchmark import metrics
-from benchmark.runner import run_scripted
+from benchmark.runner import ScriptedCall, run_scripted
 from benchmark.schema import GroundTruth, InvocationAttempt, Trajectory
 from benchmark.tasks import research_synth as rs
 
 METRICS_TRAJ_GT = [
     metrics.task_success,
     metrics.required_tool_denial_rate,
+    metrics.required_tool_omission_rate,
     metrics.unnecessary_exposure_ratio,
     metrics.exposure_precision_recall,
     metrics.revocation_lag,
@@ -121,6 +122,37 @@ def test_required_tool_denial_rate_nonzero_when_never_exposed():
     gt = rs.make_ground_truth()
     # 1 denied tool out of 5 total required across all phases
     assert metrics.required_tool_denial_rate(traj, gt) == 1 / 5
+
+
+def test_required_tool_omission_rate_zero_on_oracle():
+    """The oracle plan calls every required tool -- omission rate is 0.0,
+    same as denial rate, but for a different reason: this metric only
+    looks at what was INVOKED, never at exposure state."""
+    task, traj = _oracle_trajectory()
+    gt = rs.make_ground_truth()
+    assert metrics.required_tool_omission_rate(traj, gt) == 0.0
+
+
+def test_required_tool_omission_rate_nonzero_when_exposed_but_never_called():
+    """Distinguishes omission from denial: search_web stays exposed the
+    whole time (denial_rate == 0.0) but is never actually invoked -- the
+    "search" phase's step is swapped to call a different tool instead,
+    which keeps the phase reachable (so the phase isn't simply "never
+    reached", which would confound denial too) while search_web itself
+    goes uncalled. This is the case required_tool_denial_rate structurally
+    cannot see: a live model choosing not to call an available tool.
+    """
+    task = rs.make_task()
+    plan = rs.build_oracle_plan()
+    plan[0] = ScriptedCall(
+        phase="search", tool_call=ToolCall(name="summarize_pdf", arguments={}),
+        execute=lambda ws: None, step_id="search",
+    )
+    full_exposure_fn = lambda phase, ws: set(rs.FULL_TOOL_REGISTRY)
+    traj = run_scripted(task, plan, full_exposure_fn, baseline="OMIT_CALL")
+    gt = rs.make_ground_truth()
+    assert metrics.required_tool_denial_rate(traj, gt) == 0.0
+    assert metrics.required_tool_omission_rate(traj, gt) == 1 / 5
 
 
 def test_unnecessary_exposure_and_precision_recall_perfect_on_oracle():
