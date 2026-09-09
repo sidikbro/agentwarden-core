@@ -49,7 +49,7 @@ Your Agent  ──►  AgentWarden :8000  ──►  Your LLM
 | Governance latency | **340 ms** avg (Stage 2, warm GPU) |
 | Runtimes validated | OpenClaw · DeepAgents · Hermes |
 
-SER (Skill Economy Ratio) improvement: **+191%** ablation / **10.5×** real sessions.
+SER (Skill Economy Ratio) improvement: **+191%** ablation / **1.384×** (v2 benchmark, N=10, zero-shot classifier — see [correction note](docs/issues/v1_headline_numbers_unverifiable.md); this replaces a previously-claimed "10.5× real sessions" figure that could not be verified).
 
 ---
 
@@ -57,8 +57,12 @@ SER (Skill Economy Ratio) improvement: **+191%** ablation / **10.5×** real sess
 
 **No Docker, no local models required for the demo.**
 
+Not yet published to PyPI — install from source:
+
 ```bash
-pip install agentwarden-core (coming soon)
+git clone https://github.com/sidikbro/agentwarden-core.git
+cd agentwarden-core
+pip install -e ".[dev]"
 
 export DEEPSEEK_API_KEY=your_key
 
@@ -123,11 +127,20 @@ All configuration is YAML-driven. No rebuild required to change governance rules
 
 ## Installation
 
-**Local (pip):**
+**Local (from source — not yet published to PyPI):**
 ```bash
-pip install agentwarden-core
+git clone https://github.com/sidikbro/agentwarden-core.git
+cd agentwarden-core
+pip install -e ".[dev]"          # base install; add: pip install -e ".[all]" for RL-policy extras
 agentwarden serve --runtime openclaw --backend ollama
 ```
+
+Verify the install before doing anything else:
+```bash
+pytest tests/unit/test_environment_smoke.py -v
+```
+This fails loudly (not a silent skip) if a core dependency is missing — the
+error message names the exact `pip install` to run.
 
 **Docker:**
 ```bash
@@ -219,8 +232,28 @@ SER = tools_actually_needed / tools_exposed
 ```
 
 SER = 1.0 means the agent only has access to exactly what it needs.
-SER = 0.053 (baseline, uncontrolled OpenClaw) means 19× overprovisioning.
-AgentWarden real-session SER: **0.557** (10.5× improvement, N=500 batch).
+
+> **Correction (2026-09):** this section previously read "SER = 0.053
+> (baseline, uncontrolled OpenClaw)... AgentWarden real-session SER: 0.557
+> (10.5× improvement, N=500 batch)." That baseline (0.053) and the "N=500"
+> framing are not traceable to any evaluation run found in this project's
+> history — full investigation and evidence in
+> [`docs/issues/v1_headline_numbers_unverifiable.md`](docs/issues/v1_headline_numbers_unverifiable.md).
+> The one real N=500 evaluation that was located shows a **38% adversarial
+> block rate**, contradicting the "100% TPR / 0% FPR" claim made elsewhere
+> about that same run (see `agentwarden/policies/router.py`).
+
+Re-derived cleanly on the v2 benchmark instead, with a verified,
+non-degenerate classifier (`scripts/report_headline_reproduction.py`) — a
+controlled, scripted-task measurement, not a live "uncontrolled OpenClaw"
+session the way the original baseline was framed:
+
+Ungoverned baseline (B0) SER: **0.607**. Governed (B5: real Governor +
+real Router) SER: **0.840**. **Improvement: 1.384×** (N=10 task instances).
+
+Separately, a capability-scoping ablation (N=124 tasks/condition) showed a
+**+191–192%** SER improvement — this figure traces cleanly to a real
+evaluation and is unaffected by the correction above.
 
 ---
 
