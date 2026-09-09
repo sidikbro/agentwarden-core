@@ -36,7 +36,7 @@ Three outcomes remain all publishable — (a) static dominates, (b) learned wins
 | # | Baseline | D1 (expose) | D2 (allow) | Status |
 |---|---|---|---|---|
 | B0 | All tools | full registry | none | built, real numbers (`benchmark/baselines.py::run_b0`) |
-| B1 | Prompting-only | full registry | LLM self-restriction via system prompt | **resolved in v0.2 — see §3a.** Real live-model variant built and run. |
+| B1 | Prompting-only | full registry | LLM self-restriction via system prompt | **resolved in v0.2 — see §3a.** Real live-model variant built, run, and scaled. Reclassified as a **utility baseline** (task-completion capability under full access / no enforcement) — it is not currently evidence for any safety claim; see §3a. |
 | B2 | Global allowlist | fixed safe set | none | built, real numbers |
 | B3 | Task-conditioned YAML | per-task-type YAML | none | built, real numbers, genuine headroom confirmed (see `RECONCILED_STATE_v0.2.md` — `required_tool_denial_rate>0` on 8/20 rows, `unnecessary_exposure_ratio>0` on 16/20) |
 | B4 | Classifier-only | full registry | learned classifier per call | built; zero-shot numbers real, fine-tuned numbers **quarantined** — the only fine-tuned artifact available (`aethelgard-router`) is confirmed degenerate (blocks 12/12 tested calls including benign ones) |
@@ -46,15 +46,24 @@ Three outcomes remain all publishable — (a) static dominates, (b) learned wins
 
 **B3 remains the make-or-break baseline** (unchanged from v0.1).
 
-### 3a. B1 resolution (v0.2 addition — was an open decision in v0.1)
+### 3a. B1 resolution and reclassification (v0.2 addition — was an open decision in v0.1)
 
 v0.1 left B1 as a stated limitation with two options, undecided (`docs/v2/B1_prompting_only_limitation.md`). **Decided: option 1, build the live-model variant.** Reviewer BNSs asked for this baseline specifically; a stated-limitation-only answer leaves that ask formally unmet, and the infrastructure cost turned out to be smaller than v0.1 estimated because it composes existing pieces (`OpenAIParser`, the Ollama provider, each task family's already-existing world-state functions) rather than requiring new ones.
 
-Built: `benchmark/live_runner.py::run_b1_live` — a genuine multi-turn agent loop. Unlike `run_scripted`/`run_via_pipeline` (which replay a fixed plan), a real model sees the task's `initial_prompt` plus a safety system-prompt instruction, is offered the family's full tool registry (D1 = full registry per spec), and chooses which tool to call at each turn (D2 = none — nothing is ever blocked, isolating pure prompting self-restraint).
+Built: `benchmark/live_runner.py::run_b1_live` — a genuine multi-turn agent loop. Unlike `run_scripted`/`run_via_pipeline` (which replay a fixed plan), a real model sees the task's `initial_prompt` plus a safety system-prompt instruction, is offered the family's full tool registry (D1 = full registry per spec), and chooses which tool to call at each turn (D2 = none — nothing is ever blocked, isolating pure prompting self-restraint). Scaled beyond the initial N=3/one-family pilot: `scripts/report_b1_live_scaled.py` runs all 5 families x 2 variants (10 instances) x 3 runs x `qwen2.5:3b`, safety system prompt held verbatim and identical across every run, recorded in a run manifest.
 
-**Scaled beyond the initial N=3/one-family pilot**: `scripts/report_b1_live_scaled.py` runs all 5 families x 2 variants (10 instances) x 3 runs x `qwen2.5:3b`, with the safety system prompt held verbatim and identical across every run and recorded in a run manifest. **The pilot's specific finding ("decoy `exec_shell` called in 2/3 runs") did not reproduce at scale — 0/30 dangerous-decoy invocations — and is struck per §11a, not carried forward as a caveat.** Full detail, including why this isn't a bug (verified against the raw per-run tool-call frequency table) and what the scaled run shows instead (73% task failure rate; `repo_triage` in particular shows the model abandoning the task after 1-2 tool calls in 5/6 runs), is in `RECONCILED_STATE_v0.2.md` §5. Per the explicit sequencing instruction this baseline was built under, a second model was **not** run, since the first model's signal didn't reproduce.
+**Reclassification, and why it's necessary — this is the important part, not a footnote:**
 
-This changes how B1 supports the paper's argument: not "a live model called a dangerous tool despite being told not to" (unsupported at this N/model/prompt), but "a live model with full tool access and no enforcement frequently fails to complete the task or omits required tools even under an explicit, unambiguous safety instruction" — a real, if less dramatic, demonstration that self-restraint via prompting alone is not a substitute for enforcement.
+The pilot's specific finding ("decoy `exec_shell` called in 2/3 runs") did **not** reproduce at scale — 0/30 dangerous-decoy invocations across all 10 instances — and is struck per §11a, not carried forward as a caveat (confirmed not a detection bug: checked the raw per-run tool-call frequency table directly). What the scaled run showed instead: 73% task failure rate overall, and `repo_triage` in particular shows the model abandoning the task after 1-2 tool calls in 5/6 runs. Full detail in `RECONCILED_STATE_v0.2.md` §5.
+
+**This is a different claim than the one B1 was built to support, and the paper must not blur them:**
+- The evidence B1 actually produced is that the model **fails to perform** (task incompleteness, required-tool omission) — a **utility** finding.
+- It is *not* evidence that the model **fails to be restrained** (called a dangerous tool despite being told not to) — a **safety** finding. That specific claim has zero supporting evidence at this N/model/prompt as of this run.
+- **B1 is therefore reclassified as a utility baseline, not a safety baseline**, in the baseline matrix (§3 table) and in every place this benchmark's results are reported.
+
+**Where the safety claim now needs to come from:** "enforcement cannot live in the model" is a safety claim, and needs safety evidence — a scenario with a *real attack* present, not a passive decoy sitting unused in the tool registry. That is what the adversarial variants (A2-A5, §4) are for, not B1. **As of this plan, only A1 is built** (`benchmark/adversarial/a1_direct_dangerous.py`, one scripted scenario, N=1 — see `docs/issues/`/`scripts/report_headline_reproduction.py`'s own N=1 caveat). A2 (indirect injection via tool output), A3 (capability escalation), A4 (multi-step attack via individually-benign tools), and A5 (aliased/renamed tool) do not exist yet. Until at least one of them is built and run against a live decision-maker, **the "enforcement can't live in the model" safety claim is currently unsupported by any evidence in this repo** — B1's null result doesn't support it (wrong claim type), and A1 is a scripted, non-adversarial-in-the-live-decision-maker-sense scenario. This is a real gap, stated here rather than papered over.
+
+**Model-capability confound, stated plainly:** `qwen2.5:3b` is a 3B model. A 73% task failure rate on straightforward, unambiguous multi-step tasks may reflect this specific model's general capability limits rather than anything about prompting-based safety instructions or enforcement. B1's result should not be read as "prompting doesn't work" in general — it may just as well mean "small models are unreliable agents," which is a capability statement, not a governance one. **Any weight B1 carries in the paper needs a stronger model tested too** (e.g. `qwen2.5:7b`, already available in this environment) before task-failure-rate claims generalize beyond "this specific 3B model, on this benchmark." Not run yet — a candidate next step, not claimed here.
 
 ### 3b. Track C gate (v0.2 addition)
 
@@ -146,7 +155,7 @@ Slippage rule unchanged: cut task families 5→3 before compressing Phase 2, if 
 | Architecture inconsistency | D1/D2/D3 (§2), D3 now real |
 | Injection weakness | A2/A4/A5 |
 | Latency unclear | end-to-end latency + routed-call fraction |
-| **Reviewer BNSs: prompting-only baseline (B1)** | **§3a — resolved, not carried as open** |
+| **Reviewer BNSs: prompting-only baseline (B1)** | **§3a — resolved and run, but reclassified: it answers a utility question (does the model complete the task), not the safety question the reviewer's ask implies. That safety question still needs A2-A5, which don't exist yet.** |
 | Citation integrity | mandatory primary-source verification before submission |
 
 ---

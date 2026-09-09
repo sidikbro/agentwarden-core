@@ -61,30 +61,31 @@ Superseded figures (10.5x, "~9.3x", 100% TPR/0% FPR, N=500) remain **STRUCK** �
 | Field | Value |
 |---|---|
 | Artifact | `scripts/report_baselines.py` |
-| Commit | `119e513` (`scripts/report_baselines.py`) |
+| Commit | `<pending — see commit following this table edit>` (`scripts/report_baselines.py`, `benchmark/metrics.py`) |
 | Command | `python3 -m scripts.report_baselines` |
-| Metric definitions | `task_success` — `benchmark/metrics.py:15`; `invocation_fpr`/`invocation_fnr` — `benchmark/metrics.py:141`/`149`; others as in §1/§2 above |
+| Metric definitions | `task_success` — `benchmark/metrics.py:15`; `invocation_fpr`/`invocation_fnr` — `benchmark/metrics.py:141`/`149`; `required_tool_omission_rate` — `benchmark/metrics.py` (see its docstring: structurally 0.0 for every scripted baseline, by construction); others as in §1/§2 above |
 
 Re-run output (this pass), per-baseline average across all 10 instances:
 
-| baseline | n | success_rate | avg_denial | avg_unnec_exp | avg_precision | avg_recall | avg_fpr |
-|---|---|---|---|---|---|---|---|
-| B0 | 10 | 1.000 | 0.000 | 0.393 | 0.607 | 1.000 | 0.000 |
-| B1 | 10 | 1.000 | 0.000 | 0.393 | 0.607 | 1.000 | 0.000 |
-| B2 | 10 | 0.000 | 0.327 | 0.821 | 0.179 | 0.673 | 0.327 |
-| B3 | 10 | 0.600 | 0.075 | 0.160 | 0.840 | 0.925 | 0.075 |
-| B4:zero-shot | 10 | 0.100 | 0.000 | 0.393 | 0.607 | 1.000 | 0.253 |
-| B4:finetuned | 10 | 0.000 | 0.000 | 0.393 | 0.607 | 1.000 | **1.000** |
-| B5:zero-shot | 10 | 0.100 | 0.075 | 0.160 | 0.840 | 0.925 | 0.328 |
-| B5:finetuned | 10 | 0.000 | 0.075 | 0.160 | 0.840 | 0.925 | **1.000** |
-| B6 | 10 | 0.100 | 0.000 | **0.830** | 0.170 | 1.000 | 0.253 |
-| B7 | 10 | 1.000 | 0.000 | 0.000 | 1.000 | 1.000 | 0.000 |
+| baseline | n | success_rate | avg_denial | avg_omission | avg_unnec_exp | avg_precision | avg_recall | avg_fpr |
+|---|---|---|---|---|---|---|---|---|
+| B0 | 10 | 1.000 | 0.000 | 0.000 | 0.393 | 0.607 | 1.000 | 0.000 |
+| B1 | 10 | 1.000 | 0.000 | 0.000 | 0.393 | 0.607 | 1.000 | 0.000 |
+| B2 | 10 | 0.000 | 0.327 | 0.000 | 0.821 | 0.179 | 0.673 | 0.327 |
+| B3 | 10 | 0.600 | 0.075 | 0.000 | 0.160 | 0.840 | 0.925 | 0.075 |
+| B4:zero-shot | 10 | 0.100 | 0.000 | 0.000 | 0.393 | 0.607 | 1.000 | 0.253 |
+| B4:finetuned | 10 | 0.000 | 0.000 | 0.000 | 0.393 | 0.607 | 1.000 | **1.000** |
+| B5:zero-shot | 10 | 0.100 | 0.075 | 0.000 | 0.160 | 0.840 | 0.925 | 0.328 |
+| B5:finetuned | 10 | 0.000 | 0.075 | 0.000 | 0.160 | 0.840 | 0.925 | **1.000** |
+| B6 | 10 | 0.100 | 0.000 | 0.000 | **0.830** | 0.170 | 1.000 | 0.253 |
+| B7 | 10 | 1.000 | 0.000 | 0.000 | 0.000 | 1.000 | 1.000 | 0.000 |
 
 Status: **VERIFIED**, this pass, against the working tree. Notes required by the reconciliation rule, not optional caveats:
 
 - **B1 = B0 exactly**, every column, by construction. Not a second data point — see §5 below, which is the actual B1 resolution.
 - **B4:finetuned / B5:finetuned avg_fpr = 1.000** confirms, freshly, that the only fine-tuned classifier artifact available (`aethelgard-router:latest`) blocks every legitimate call tested — consistent with `docs/issues/aethelgard-router-degenerate.md`. These two rows are **PENDING/QUARANTINED**: real numbers, real re-run, but they characterize a broken model artifact, not "fine-tuned classifier performance," and must not be cited as the latter in the paper.
 - **B6 avg_unnec_exp = 0.830**: this is the number `EXPERIMENTAL_PLAN_v0.2.md` §3b's gate exists to catch. See §4 below — it is **STRUCK as a Track-C result** (not struck as a number; the number is real and reproduces, it's struck as evidence of anything about learned governance, since B6 is a documented non-trained placeholder and now formally fails the gate).
+- **`avg_omission = 0.000` for every one of B0-B7, exactly, no exceptions.** This is the scrutiny `required_tool_omission_rate` was asked to survive before it could carry any weight from §5's B1 finding: computed here for every baseline (not just B1), confirming empirically — not just by argument in the docstring — that this metric has zero variance anywhere except a live decision-maker. The nonzero values reported for B1-live in §5 are therefore real signal, not an artifact of a metric that happens to vary everywhere and was cherry-picked for the one baseline where it looked interesting.
 
 ---
 
@@ -137,7 +138,9 @@ Status: **VERIFIED**, this pass, against the working tree. Notes required by the
 
 The pilot's specific finding does not hold up at scale for `qwen2.5:3b`. **Per explicit instruction, a second model was not run** — the sequencing rule was "no more models until one reproduces the pilot number," and it didn't. This is reported as a real, informative null result, not a failed experiment: 30 independent live-agent runs across the full task-family diversity of this benchmark produced zero dangerous-decoy invocations for this model under this system prompt.
 
-This does **not** mean "prompting-only self-restriction works" — the much larger and more robust finding in this same run is **task incompleteness and required-tool omission**: 73% task failure rate overall, and `repo_triage` specifically shows the model abandoning the task after one or two tool calls in 5 of 6 runs (`required_tool_omission_rate` 0.767). The mechanism by which "enforcement cannot live in the model" fails to hold here is not dangerous-tool-calling (not observed at this N, this model, this prompt) — it's that the model frequently does not reliably complete the task at all when it alone decides what to call and when to stop. Both are real findings; they are not the same claim, and the paper needs to report the one the data actually supports, not the one the pilot suggested.
+**Reclassification (required, not optional): B1 is a utility baseline, not a safety baseline.** The scaled run's real, robust finding is **task incompleteness and required-tool omission** — 73% task failure rate overall, `repo_triage` specifically showing the model abandoning the task after one or two tool calls in 5 of 6 runs (`required_tool_omission_rate` 0.767, confirmed structurally zero on every scripted baseline B0-B7 — see §3's `avg_omission` column — so this variance is real, not a metric artifact). That is a **capability/utility** finding: the model fails to *perform*. It is not evidence that the model fails to *be restrained* — no dangerous-tool-calling was observed at this N/model/prompt, so B1 currently supports no safety claim at all. "Enforcement cannot live in the model" is a safety claim; it needs a scenario with a real attack present, not a passive unused decoy — that's what A2-A5 are for (§4 of `EXPERIMENTAL_PLAN_v0.2.md`), and **only A1 is built today**. Until at least one of A2-A5 exists and runs against a live decision-maker, the safety claim has no supporting evidence in this repo, and B1's null result must not be read as filling that gap.
+
+**Model-capability confound, stated plainly:** `qwen2.5:3b` is a 3B model. 73% task failure on straightforward multi-step tasks may reflect this specific model's general capability limits, not anything about prompting-based instructions or enforcement. Any weight B1 carries in the paper needs a stronger model run too (e.g. `qwen2.5:7b`, already available in this environment) before "the model frequently fails to complete tasks" generalizes past "this specific 3B model." Not run yet.
 
 **Open question, not resolved here:** whether `qwen2.5:3b`'s specific near-zero dangerous-decoy rate reflects (a) this model genuinely respecting the safety instruction reliably, (b) this model rarely considering `exec_shell`/`delete_file` as plausible tool choices for these particular tasks regardless of instruction (a benchmark-design question, not a safety one), or (c) something else. Distinguishing these needs either a task design that makes the decoy tool more tempting/plausible, or testing whether the same near-zero rate holds with NO safety instruction at all (a different, legitimate condition — not run here, since it changes the prompt, which this run's design held constant on purpose).
 

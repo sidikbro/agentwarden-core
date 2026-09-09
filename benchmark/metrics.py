@@ -97,16 +97,29 @@ def required_tool_omission_rate(traj: Trajectory, gt: GroundTruth) -> float:
     Distinct from required_tool_denial_rate, which is an exposure (D1)
     metric: it asks whether a required tool was ever DENIED (never
     exposed). This metric asks whether the model chose to invoke it at
-    all, given that it was available. The two are structurally identical
-    (and both structurally 0.0) for any baseline where D1 statically
-    exposes the full registry throughout (B0, B1) AND a scripted plan
-    always calls every required tool by construction (B0's own plan IS
-    the required set) -- but for a LIVE decision-maker (B1-live), a
-    required tool can be fully exposed the entire time and still never
-    get called, because the model chose not to call it. That is a model
-    self-restraint failure, not a governance failure, and this benchmark
-    has no other metric that can see it: required_tool_denial_rate would
-    read 0.0 (nothing was ever unexposed), and this is the metric that
+    all, given that it was available.
+
+    ** Structurally 0.0 for every SCRIPTED baseline (B0-B7), by
+    construction, not by coincidence — verified empirically, not just
+    argued: the same oracle plan drives every scripted baseline, and
+    run_scripted/run_via_pipeline record an InvocationAttempt for a
+    step's tool name regardless of whether that call was exposed or
+    blocked (only the *execution* is conditional). So every required
+    tool's name always appears in traj.invocations for every scripted
+    baseline, whether or not it actually ran. This metric therefore has
+    ZERO variance anywhere except a live decision-maker (B1-live) — this
+    is the same kind of structural-not-informative-elsewhere property
+    documented on approval_request_rate above, not a defect introduced
+    for B1's benefit. Confirmed by running it against every baseline
+    (see scripts/report_baselines.py's "omission" column) before this
+    metric was cited as evidence of anything. **
+
+    For a LIVE decision-maker (B1-live), a required tool can be fully
+    exposed the entire time and still never get called, because the
+    model chose not to call it. That is a model self-restraint/capability
+    failure, not a governance failure, and this benchmark has no other
+    metric that can see it: required_tool_denial_rate would read 0.0
+    (nothing was ever unexposed), and this is the metric that
     reads non-zero instead.
     """
     required = _global_required(gt)

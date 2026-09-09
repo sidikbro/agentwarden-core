@@ -73,6 +73,7 @@ def _row(baseline: str, task, gt, traj) -> dict:
         "baseline": baseline,
         "success": metrics.task_success(traj, gt),
         "denial": metrics.required_tool_denial_rate(traj, gt),
+        "omission": metrics.required_tool_omission_rate(traj, gt),
         "unnec_exp": metrics.unnecessary_exposure_ratio(traj, gt),
         "precision": precision,
         "recall": recall,
@@ -124,8 +125,8 @@ def main() -> None:
             rows.append(_row("B6", task, gt, run_b6(task, plan, learned_governor, pipeline_b6)))
         rows.append(_row("B7", task, gt, run_b7(task, gt, plan)))
 
-    cols = ["family", "variant", "baseline", "success", "denial", "unnec_exp", "precision", "recall", "fpr"]
-    widths = [18, 8, 13, 8, 8, 10, 10, 8, 6]
+    cols = ["family", "variant", "baseline", "success", "denial", "omission", "unnec_exp", "precision", "recall", "fpr"]
+    widths = [18, 8, 13, 8, 8, 9, 10, 10, 8, 6]
 
     def fmt(values: list) -> str:
         return "  ".join(str(v).ljust(w) for v, w in zip(values, widths))
@@ -135,22 +136,22 @@ def main() -> None:
     for r in rows:
         print(fmt([
             r["family"], r["variant"], r["baseline"], r["success"],
-            f"{r['denial']:.3f}", f"{r['unnec_exp']:.3f}", f"{r['precision']:.3f}", f"{r['recall']:.3f}",
-            f"{r['invocation_fpr']:.3f}",
+            f"{r['denial']:.3f}", f"{r['omission']:.3f}", f"{r['unnec_exp']:.3f}",
+            f"{r['precision']:.3f}", f"{r['recall']:.3f}", f"{r['invocation_fpr']:.3f}",
         ]))
 
     print()
     print("Per-baseline summary, averaged across all instances that ran:")
     baseline_order = ["B0", "B1", "B2", "B3", "B4:zero-shot", "B4:finetuned", "B5:zero-shot", "B5:finetuned", "B6", "B7"]
     baselines_seen = [b for b in baseline_order if any(r["baseline"] == b for r in rows)]
-    print(fmt(["baseline", "n", "success_rate", "avg_denial", "avg_unnec_exp", "avg_precision", "avg_recall", "avg_fpr"]))
+    print(fmt(["baseline", "n", "success_rate", "avg_denial", "avg_omission", "avg_unnec_exp", "avg_precision", "avg_recall", "avg_fpr"]))
     for b in baselines_seen:
         subset = [r for r in rows if r["baseline"] == b]
         n = len(subset)
         success_rate = sum(1 for r in subset if r["success"]) / n
         avg = lambda k: sum(r[k] for r in subset) / n
         print(fmt([
-            b, str(n), f"{success_rate:.3f}", f"{avg('denial'):.3f}",
+            b, str(n), f"{success_rate:.3f}", f"{avg('denial'):.3f}", f"{avg('omission'):.3f}",
             f"{avg('unnec_exp'):.3f}", f"{avg('precision'):.3f}", f"{avg('recall'):.3f}", f"{avg('invocation_fpr'):.3f}",
         ]))
 
@@ -160,6 +161,9 @@ def main() -> None:
     print("B4:finetuned uses a DEGENERATE model artifact (always blocks, fabricated reasons) --")
     print("see this script's module docstring. Not representative of real fine-tuned performance.")
     print("B6 uses PlaceholderLearnedGovernor -- NOT a trained policy, see its module docstring.")
+    print("avg_omission is expected to be exactly 0.000 for every scripted baseline (B0-B7) --")
+    print("see metrics.py::required_tool_omission_rate's docstring: this is structural, not a")
+    print("finding. It has variance only for a live decision-maker (B1-live, scripts/report_b1_live_scaled.py).")
 
 
 if __name__ == "__main__":
