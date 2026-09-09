@@ -21,19 +21,37 @@ always_block:
   - terminal
   - system
 
+  # Privilege escalation
+  - sudo
+  - su
+
+  # Spawning (unconditional — see route_to_review below for the
+  # conditionally-legitimate subagent/delegation surface)
+  - spawn
+  - create_agent
+
+# ── Route-to-review tool names ───────────────────────────────────────────────
+# Conditionally legitimate, high-risk tools. Unlike always_block, these are
+# NOT hard-blocked at Stage 1: they proceed to Stage 2 (classifier), which
+# can still BLOCK them outright on content grounds. If Stage 2 does not
+# block, ApprovalGatePolicy (D3) downgrades the call to Decision.REVIEW
+# rather than ALLOW — no approver is currently configured, so REVIEW
+# resolves to "not executed" for now, but is audited and explained
+# separately from an unconditional BLOCK. See config/tools.yaml's
+# route_to_review flags (this list is the operator-editable mirror, same
+# pattern as always_block above).
+
+route_to_review:
   # Process management
   - process
   - kill
-  - sudo
-  - su
   - chmod
   - chown
 
-  # Subagent / spawning
+  # Subagent / delegation
   - sessions_spawn
+  - subagent
   - subagents
-  - spawn
-  - create_agent
   - delegate
   - task
 

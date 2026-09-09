@@ -134,14 +134,22 @@ tools:
     description: "Spawn a subagent or isolated session"
     risk_level: 4
     categories: [session, execution]
-    always_block: true
-    block_reason: "Subagent spawning always blocked — requires explicit governance elevation"
+    route_to_review: true
+    review_reason: "Conditionally legitimate (multi-agent orchestration) — routed to Stage 2/3 rather than hard-blocked"
+
+  subagent:
+    description: "Manage a sub-agent run (singular alias)"
+    risk_level: 4
+    categories: [session, execution]
+    route_to_review: true
+    review_reason: "Conditionally legitimate (multi-agent orchestration) — routed to Stage 2/3 rather than hard-blocked"
 
   subagents:
     description: "Manage sub-agent runs"
     risk_level: 4
     categories: [session, execution]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (multi-agent orchestration) — routed to Stage 2/3 rather than hard-blocked"
 
   sessions_yield:
     description: "End current turn and yield to subagent result"
@@ -212,13 +220,15 @@ tools:
     description: "Manage background processes"
     risk_level: 3
     categories: [execution, process]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (e.g. CI/ops workflows) — routed to Stage 2/3 rather than hard-blocked"
 
   kill:
     description: "Kill a process"
     risk_level: 3
     categories: [execution, process]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (e.g. killing a hung process) — routed to Stage 2/3 rather than hard-blocked"
 
   sudo:
     description: "Run command with elevated privileges"
@@ -236,13 +246,15 @@ tools:
     description: "Change file permissions"
     risk_level: 3
     categories: [filesystem, privilege]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (e.g. build/deploy scripts) — routed to Stage 2/3 rather than hard-blocked"
 
   chown:
     description: "Change file ownership"
     risk_level: 3
     categories: [filesystem, privilege]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (e.g. build/deploy scripts) — routed to Stage 2/3 rather than hard-blocked"
 
   spawn:
     description: "Spawn a new process or agent"
@@ -254,13 +266,15 @@ tools:
     description: "Create or delegate a task"
     risk_level: 3
     categories: [automation]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (multi-agent orchestration) — routed to Stage 2/3 rather than hard-blocked"
 
   delegate:
     description: "Delegate work to another agent"
     risk_level: 3
     categories: [automation]
-    always_block: true
+    route_to_review: true
+    review_reason: "Conditionally legitimate (multi-agent orchestration) — routed to Stage 2/3 rather than hard-blocked"
 
   create_agent:
     description: "Create a new agent instance"

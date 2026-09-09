@@ -9,6 +9,14 @@ Enterprise: Uses fine-tuned LoRA weights (~95%+ accuracy on tenant traffic)
 
 The classifier is intentionally skipped for known-safe tools
 (read, memory_search, web_search) to avoid false positives.
+
+** UNVERIFIED / CONTRADICTED — 2026-09 **: the "~95%+ accuracy" figure for
+fine-tuned weights is not supported by the "aethelgard-router" Ollama tags
+available in this environment — see agentwarden/policies/router.py's
+SafetyRouter docstring for the direct-test evidence (blocks 12/12 tested
+calls, including benign ones, with fabricated reasons). Same caveat
+applies here: don't cite this figure without re-verifying against a
+known-good checkpoint.
 """
 from __future__ import annotations
 
@@ -98,7 +106,14 @@ class LLMClassifierPolicy(PolicyPlugin):
 
         try:
             result = self._classify(tc.name, tc.arguments)
-            decision_str = result.get("decision", "ALLOW").upper()
+            # Some fine-tuned models' own baked-in system prompts specify a
+            # different JSON key ("action") than this policy's own
+            # CLASSIFY_PROMPT asks for ("decision") — Ollama's /api/generate
+            # auto-prepends a model's system prompt, so a fine-tuned model
+            # can receive both instructions on every call. Accept either key
+            # rather than silently defaulting to ALLOW when a model
+            # correctly follows its own trained format but not this one.
+            decision_str = str(result.get("decision") or result.get("action") or "ALLOW").upper()
             confidence   = float(result.get("confidence", 0.5))
             reason       = result.get("reason", "")
         except Exception as e:

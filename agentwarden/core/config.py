@@ -36,6 +36,11 @@ Example agentwarden.yaml:
           - web_search
           - read_todos
 
+      approval:
+        enabled: true
+        timeout_ms: 0                # 0 = no synchronous approver exists yet
+        default_on_timeout: block    # only supported value today
+
       semantic_filter:
         enabled: true
         model: llama-guard3         # or meta-llama/Llama-Guard-3-8B via HF
@@ -117,6 +122,22 @@ class SemanticFilterConfig:
     filter_output: bool = True           # filter LLM response text
 
 @dataclass
+class ApprovalStageConfig:
+    """D3 (approve) — see agentwarden/policies/approval_gate.py.
+
+    There is currently no synchronous approval channel (no queue, no
+    approver, no UI) anywhere in this codebase — the proxy is a single
+    synchronous request/response cycle. timeout_ms=0 / default_on_timeout
+    ="block" reflects that: a route_to_review tool that Stage 1/2 didn't
+    block resolves to Decision.REVIEW, which behaves as "not executed"
+    until a real approval channel exists. Raising timeout_ms only becomes
+    meaningful once one does.
+    """
+    enabled: bool = True
+    timeout_ms: int = 0                  # 0 = no synchronous approver exists yet
+    default_on_timeout: str = "block"    # only supported value today
+
+@dataclass
 class RLPolicyConfig:
     enabled: bool = False                # Enterprise only
     model_path: str | None = None        # path to best_model.zip
@@ -126,6 +147,7 @@ class RLPolicyConfig:
 class StagesConfig:
     rules:           RulesStageConfig     = field(default_factory=RulesStageConfig)
     classifier:      ClassifierStageConfig = field(default_factory=ClassifierStageConfig)
+    approval:        ApprovalStageConfig   = field(default_factory=ApprovalStageConfig)
     semantic_filter: SemanticFilterConfig  = field(default_factory=SemanticFilterConfig)
     rl_policy:       RLPolicyConfig        = field(default_factory=RLPolicyConfig)
 
@@ -198,6 +220,8 @@ class AgentWardenConfig:
             active.append("rules")
         if self.stages.classifier.enabled:
             active.append("classifier")
+        if self.stages.approval.enabled:
+            active.append("approval")
         if self.stages.semantic_filter.enabled:
             active.append("semantic_filter")
         if self.stages.rl_policy.enabled:
@@ -256,6 +280,8 @@ class AgentWardenConfig:
             _update_dc(cfg.stages.rules, stages_data["rules"])
         if "classifier" in stages_data:
             _update_dc(cfg.stages.classifier, stages_data["classifier"])
+        if "approval" in stages_data:
+            _update_dc(cfg.stages.approval, stages_data["approval"])
         if "semantic_filter" in stages_data:
             _update_dc(cfg.stages.semantic_filter, stages_data["semantic_filter"])
         if "rl_policy" in stages_data:

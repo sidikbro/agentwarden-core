@@ -44,6 +44,25 @@ class ToolCall:
     raw_format: str | None = None
 
 @dataclass
+class SessionState:
+    """Everything a D1/D2/D3 policy might need to condition on beyond the
+    current tool call in isolation. Passed to GovernanceProfile.expose() so
+    a learned policy (e.g. B6's RL-backed Governor) can use session history
+    without another interface change — a static YAML-driven profile mostly
+    ignores it and looks only at task_type/phase.
+    """
+    prior_actions:   list[str]           = field(default_factory=list)
+        # tool names invoked so far this session, in call order
+    phase_history:   list[str]           = field(default_factory=list)
+        # phases entered so far this session, in order (a phase may repeat)
+    data_provenance: dict[str, list[str]] = field(default_factory=dict)
+        # artifact/result key -> tool names whose output it was derived from
+    turn:            int                 = 0
+    extra:           dict[str, Any]      = field(default_factory=dict)
+        # escape hatch for task- or experiment-specific state a particular
+        # policy needs that doesn't warrant a first-class field yet
+
+@dataclass
 class GovernanceContext:
     session_id:    str            = field(default_factory=lambda: str(uuid.uuid4()))
     runtime:       Runtime        = Runtime.GENERIC
@@ -84,8 +103,18 @@ class PipelineResult:
     total_latency_ms: float                    = 0.0
 
     @property
-    def any_blocked(self): return any(d.decision == Decision.BLOCK for d in self.decisions)
+    def any_blocked(self):
+        """True if anything was unconditionally BLOCKed. Deliberately does
+        NOT count REVIEW — a REVIEW'd call didn't execute either, but for
+        a different reason (no approver, not "categorically forbidden").
+        Use `any_reviewed` / `review_count` for that, or `not any_allowed`
+        for "did everything not-execute for any reason"."""
+        return any(d.decision == Decision.BLOCK for d in self.decisions)
     @property
     def block_count(self): return sum(1 for d in self.decisions if d.decision == Decision.BLOCK)
+    @property
+    def review_count(self): return sum(1 for d in self.decisions if d.decision == Decision.REVIEW)
+    @property
+    def any_reviewed(self): return any(d.decision == Decision.REVIEW for d in self.decisions)
     @property
     def allow_count(self): return sum(1 for d in self.decisions if d.decision == Decision.ALLOW)

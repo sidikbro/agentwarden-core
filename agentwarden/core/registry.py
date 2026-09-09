@@ -23,8 +23,9 @@ class PluginRegistry:
         import importlib
         r = cls()
         for mod in ["agentwarden.parsers.openai","agentwarden.parsers.hermes",
-                    "agentwarden.policies.rules","agentwarden.policies.classifier","agentwarden.providers.ollama",
-                    "agentwarden.providers.openai_provider"]:
+                    "agentwarden.policies.rules","agentwarden.policies.classifier",
+                    "agentwarden.policies.approval_gate","agentwarden.providers.ollama",
+                    "agentwarden.providers.openai_provider","agentwarden.profiles.capability_governor"]:
             try: importlib.import_module(mod)
             except Exception as e: logger.debug("Skip %s: %s", mod, e)
         for c in _reg.parsers:   r._parsers[c.runtime.value] = c

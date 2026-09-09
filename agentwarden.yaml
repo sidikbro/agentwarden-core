@@ -9,6 +9,10 @@
 #   AgentWarden Proxy :8000
 #       ↓  Stage 1: Rules (0.1ms)
 #       ↓  Stage 2: LLM Classifier (~800ms, skipped for safe tools)
+#       ↓  Approval Gate (D3): route_to_review tools not blocked by
+#          Stage 1/2 become Decision.REVIEW rather than ALLOW. No
+#          synchronous approver exists yet, so this resolves to
+#          "not executed" today — see agentwarden/policies/approval_gate.py.
 #       ↓  Stage 3: Semantic Filter (~1s, opt-in)
 #   LLM Backend (Ollama, DeepSeek, OpenAI, vLLM...)
 #
@@ -44,6 +48,11 @@ stages:
     model_path: null
     threshold: 0.85
     timeout_ms: 2000
+
+  approval:
+    enabled: true
+    timeout_ms: 0                # 0 = no synchronous approver exists yet
+    default_on_timeout: block    # only supported value today
 
   semantic_filter:
     enabled: false
