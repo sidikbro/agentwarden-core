@@ -9,9 +9,20 @@ Two variants, differing in what "edit" actually needs:
 
 config/capability_profiles.yaml's repo_triage entry includes run_linter
 defensively (a static author reasoning "CI probably wants a lint pass") —
-no variant's ground truth ever requires it. It doesn't include
+in v1/v2, no variant's ground truth requires it. It doesn't include
 run_migration, so v2 is denied and fails — the author never saw a fix that
 needed a migration.
+
+v3 (Track A expansion, docs/v2/EXPERIMENTAL_PLAN_v0.2.md §4a, batch 1;
+PENDING human review per that protocol) subverts the run_linter
+assumption directly: this repo's CI gate genuinely requires a lint pass
+before tests are trusted, making run_linter load-bearing in the "test"
+phase for the first time. The static profile that (correctly, for v1/v2)
+treated run_linter as unnecessary now under-exposes v3 — same
+task-evolution failure mode as research_synth v3's summarize_pdf. The
+dependency is real: run_tests_v3 checks ws["lint_passed"] by bracket
+access, so withholding run_linter breaks it, not just leaves it
+cosmetically absent — verified by validate.py check 3.
 """
 from __future__ import annotations
 
@@ -30,11 +41,19 @@ FULL_TOOL_REGISTRY = {
 _EDIT_REQUIRED = {
     "v1": {"edit_code"},
     "v2": {"edit_code", "run_migration"},
+    "v3": {"edit_code"},   # v3's new axis is the test phase, not edit -- isolate the variable
+}
+
+_TEST_REQUIRED = {
+    "v1": {"run_tests"},
+    "v2": {"run_tests"},
+    "v3": {"run_linter", "run_tests"},
 }
 
 
 def phases_for(variant: str) -> list[Phase]:
     edit_required = _EDIT_REQUIRED[variant]
+    test_required = _TEST_REQUIRED[variant]
     return [
         Phase(
             name="inspect",
@@ -56,8 +75,8 @@ def phases_for(variant: str) -> list[Phase]:
         ),
         Phase(
             name="test",
-            required_tools={"run_tests"},
-            revocable_after={"run_tests"},
+            required_tools=set(test_required),
+            revocable_after=set(test_required),
             success_predicate=lambda traj: traj.final_state.get("tests_passed") is True,
         ),
         Phase(
@@ -71,14 +90,16 @@ def phases_for(variant: str) -> list[Phase]:
 
 def make_task(variant: str = "v1", task_id: str | None = None) -> Task:
     task_id = task_id or f"repo_triage_{variant}"
-    prompt = (
-        "Inspect the repository, read the relevant module, fix the bug, "
-        "run the test suite, and commit the fix."
-        if variant == "v1" else
-        "Inspect the repository, read the relevant module, fix the bug "
-        "(this one needs a database migration too), run the test suite, "
-        "and commit the fix."
-    )
+    prompt = {
+        "v1": "Inspect the repository, read the relevant module, fix the bug, "
+              "run the test suite, and commit the fix.",
+        "v2": "Inspect the repository, read the relevant module, fix the bug "
+              "(this one needs a database migration too), run the test suite, "
+              "and commit the fix.",
+        "v3": "Inspect the repository, read the relevant module, fix the bug. "
+              "This repo's CI requires a lint pass before tests are trusted -- "
+              "lint, then run the test suite, and commit the fix.",
+    }[variant]
     return Task(
         task_id=task_id,
         family="repo_triage",
@@ -91,9 +112,10 @@ def make_task(variant: str = "v1", task_id: str | None = None) -> Task:
 
 def make_ground_truth(variant: str = "v1") -> GroundTruth:
     phases = phases_for(variant)
+    step_count = len(build_oracle_plan(variant))   # descriptive only, not consumed by any metric/check
     return GroundTruth(
         minimum_required_tools={p.name: set(p.required_tools) for p in phases},
-        phase_boundaries=[1, 2, 3, 4, 5] if variant == "v1" else [1, 2, 3, 4, 5, 6],
+        phase_boundaries=list(range(1, step_count + 1)),
         task_success_criteria=lambda traj: (
             traj.final_state.get("committed") is True
             and traj.final_state.get("tests_passed") is True
@@ -147,6 +169,24 @@ def _run_tests_v2(ws):
     return ws["tests_passed"]
 
 
+def _lint_code(ws):
+    # dependency access before mutation -- see inbox_workflow.py's
+    # _schedule_event note on why this ordering matters.
+    _ = ws["diff"]
+    ws["lint_passed"] = True
+    return ws["lint_passed"]
+
+
+def _run_tests_v3(ws):
+    # bracket access (not .get with a default) is deliberate, same
+    # reasoning as _run_tests_v2's migration_applied check: a missing
+    # lint_passed means run_linter was withheld, which must make this
+    # fail, not silently pass.
+    _ = ws["lint_passed"]
+    ws["tests_passed"] = bool(ws.get("diff"))
+    return ws["tests_passed"]
+
+
 def _commit_changes(ws):
     ws["committed"] = True
     ws["commit_sha"] = "abc123"
@@ -188,11 +228,23 @@ def build_oracle_plan(variant: str = "v1") -> list[ScriptedCall]:
         ))
         test_derived = ["edit", "migration"]
 
+    test_fn = {"v1": _run_tests_v1, "v2": _run_tests_v2, "v3": _run_tests_v3}[variant]
+
+    if variant == "v3":
+        plan.append(ScriptedCall(
+            phase="test",
+            tool_call=ToolCall(name="run_linter", arguments={"path": "src/main.py"}),
+            execute=_lint_code,
+            step_id="lint",
+            derived_from=["edit"],
+        ))
+        test_derived = ["lint"]
+
     plan.extend([
         ScriptedCall(
             phase="test",
             tool_call=ToolCall(name="run_tests", arguments={"suite": "all"}),
-            execute=_run_tests_v1 if variant == "v1" else _run_tests_v2,
+            execute=test_fn,
             step_id="test",
             derived_from=test_derived,
         ),
@@ -207,5 +259,5 @@ def build_oracle_plan(variant: str = "v1") -> list[ScriptedCall]:
     return plan
 
 
-VARIANTS = ["v1", "v2"]
+VARIANTS = ["v1", "v2", "v3"]
 TASKS = [make_task(v) for v in VARIANTS]

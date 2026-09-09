@@ -92,6 +92,7 @@ Expanding the benchmark by 90 new task instances is the same scale of work as th
 - **Review means**: a human (not a model) reads the task's `initial_prompt`, `phases_for()`, `make_ground_truth()`, and `build_oracle_plan()`, and confirms by hand that (a) the required-tools set for each phase is actually minimal and actually necessary — not just "a plausible-sounding tool for this phase" — and (b) the oracle plan is the one a competent human would actually execute for this task, not a mechanically-generated withholding-proof shortcut. Confirming that `validate.py` passes is necessary but not sufficient for review sign-off; a reviewer who only ran the checks and didn't read the instance has not reviewed it.
 - **Overcorrection guard** (same concern as the D2 dataset's §2 clarification): expanding instance count must not silently skew the benchmark's family/variant/difficulty-type balance (overlapping vocab, within-family variation, content-dependence, distractors — the four difficulty categories added after the original all-perfect-scores finding). Report the new instances' distribution across those four categories alongside the expansion, not just a total count.
 - No instance is added to any *reported* baseline run until it is past `review_status=pending`. A pending instance may exist in the repo for iteration, but a baseline run over a batch that includes pending instances is not a reportable number — same rule as §12 below.
+- **Track A started:** `docs/v2/BENCHMARK_EXPANSION_MANIFEST.md` tracks progress batch by batch (batch 1: 3 new instances, 10→13, all 5 checks passing, review_status=PENDING). Batches are deliberately small and individually validated rather than generated in bulk — the same failure mode this section opens with (model-generated volume standing in for real diversity) applies just as much to rushing this expansion as to rushing the D2 dataset.
 
 ---
 
@@ -127,7 +128,7 @@ L0 (B3) through L6, multi-seed (≥5) with CIs, unchanged from v0.1. None have s
 Phase 1 (Sep-Oct)  Benchmark harness + task families + ground truth + adversarial variants -- DONE (5 families, difficulty added, 5 checks enforced)
                    D1 Capability Governor -- DONE. D3 Approval Gate -- DONE (not in v0.1's Phase 1 scope; pulled forward because it was needed to make REVIEW real).
                    B1 live-model resolution -- DONE (minimal scope, §3a).
-Phase 1.5 (new)    Benchmark expansion (90 instances, §4a protocol) -- NOT STARTED. Gated on RECONCILED_STATE_v0.2.md (see below).
+Phase 1.5 (new)    Benchmark expansion (90 instances, §4a protocol) -- STARTED, batch 1 (13/~100), review_status=PENDING (BENCHMARK_EXPANSION_MANIFEST.md).
 Phase 2 (Oct-Nov)  Baselines B0-B5, B7 -- DONE, real numbers. B6 -- placeholder only, gated (§3b).
 Phase 3 (Nov-Dec)  Learned conditions L1-L6 -- NOT STARTED. Gated on §3b passing for each.
 Phase 4 (Dec)      Generalization G1-G4; security tests A1-A5 -- NOT STARTED (only A1 built, N=1 scripted scenario).

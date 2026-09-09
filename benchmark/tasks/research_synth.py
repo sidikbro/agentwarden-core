@@ -18,11 +18,26 @@ Two variants, deliberately different in what "analyze" requires:
 inbox_workflow (v2) — the same capability, several plausible task types,
 deliberately not a clean per-family partition.
 
-`summarize_pdf` is a PLAUSIBLE DISTRACTOR: a reasonable static-profile
-author might include it for a "research" task type, but no variant's
-ground truth ever requires it. See config/capability_profiles.yaml, whose
-research_synth entry hand-authors exactly this mistake — it is NOT derived
-from this file's ground truth, on purpose.
+`summarize_pdf` is a PLAUSIBLE DISTRACTOR in v1/v2: a reasonable
+static-profile author might include it for a "research" task type, but
+neither variant's ground truth requires it. See
+config/capability_profiles.yaml, whose research_synth entry hand-authors
+exactly this mistake — it is NOT derived from this file's ground truth,
+on purpose.
+
+v3 (Track A expansion, docs/v2/EXPERIMENTAL_PLAN_v0.2.md §4a, batch 1;
+PENDING human review per that protocol) deliberately subverts that
+assumption: the source is long enough that extract_facts cannot operate
+on the raw parsed text directly and needs summarize_pdf FIRST. This
+makes the "summarize_pdf is a pure distractor" belief encoded in
+capability_profiles.yaml stale for v3 specifically — a static profile
+author who wrote that config for v1/v2 has no way to know v3 needs it,
+which is exactly the task-evolution failure mode
+EXPERIMENTAL_PLAN_v0.2.md §1 asks whether learned governance handles
+better than a static one. The dependency is real, not cosmetic: withheld
+summarize_pdf leaves parse_pdf's output marked LONG_RAW, and
+extract_facts_v3 refuses to run on unmarked-summarized content (raises,
+rather than silently succeeding) — verified by validate.py check 3.
 """
 from __future__ import annotations
 
@@ -41,6 +56,7 @@ FULL_TOOL_REGISTRY = {
 _ANALYZE_REQUIRED = {
     "v1": {"extract_facts"},
     "v2": {"parse_pdf", "extract_facts"},
+    "v3": {"parse_pdf", "summarize_pdf", "extract_facts"},
 }
 
 
@@ -84,13 +100,15 @@ def phases_for(variant: str) -> list[Phase]:
 
 def make_task(variant: str = "v1", task_id: str | None = None) -> Task:
     task_id = task_id or f"research_synth_{variant}"
-    prompt = (
-        "Research the latest renewable energy report, write a short summary, "
-        "and email it to the editor."
-        if variant == "v1" else
-        "Research the latest renewable energy report (a PDF this time), "
-        "write a short summary, and email it to the editor."
-    )
+    prompt = {
+        "v1": "Research the latest renewable energy report, write a short summary, "
+              "and email it to the editor.",
+        "v2": "Research the latest renewable energy report (a PDF this time), "
+              "write a short summary, and email it to the editor.",
+        "v3": "Research the latest renewable energy report (a very long PDF this "
+              "time, too long to read directly), write a short summary, and email "
+              "it to the editor.",
+    }[variant]
     return Task(
         task_id=task_id,
         family="research_synth",
@@ -103,9 +121,10 @@ def make_task(variant: str = "v1", task_id: str | None = None) -> Task:
 
 def make_ground_truth(variant: str = "v1") -> GroundTruth:
     phases = phases_for(variant)
+    step_count = {"v1": 5, "v2": 6, "v3": 7}[variant]   # descriptive only, not consumed by any metric/check
     return GroundTruth(
         minimum_required_tools={p.name: set(p.required_tools) for p in phases},
-        phase_boundaries=[1, 2, 3, 4, 5] if variant == "v1" else [1, 2, 3, 4, 5, 6],
+        phase_boundaries=list(range(1, step_count + 1)),
         task_success_criteria=lambda traj: (
             traj.final_state.get("sent") is True and bool(traj.final_state.get("draft"))
         ),
@@ -149,6 +168,32 @@ def _extract_facts(ws):
     return ws["facts"]
 
 
+# --- v3: summarize_pdf becomes load-bearing, not a distractor ---------------
+
+
+def _parse_pdf_v3(ws):
+    # Marked LONG_RAW deliberately: extract_facts_v3 refuses to run on
+    # this marker directly, which is what makes summarize_pdf a REAL
+    # dependency (caught by validate.py check 3) rather than a step whose
+    # absence silently goes unnoticed by a shallow "key exists" success
+    # check — the same shallow-check risk every other family's bracket-
+    # access discipline exists to avoid.
+    ws["page_content"] = f"[LONG_RAW parsed text from: {ws['raw_pdf_bytes']}]"
+    return ws["page_content"]
+
+
+def _summarize_pdf(ws):
+    ws["page_content"] = f"[summary of: {ws['page_content']}]"
+    return ws["page_content"]
+
+
+def _extract_facts_v3(ws):
+    if ws["page_content"].startswith("[LONG_RAW"):
+        raise ValueError("content too long to extract facts from directly -- summarize first")
+    ws["facts"] = [f"fact derived from: {ws['page_content']}"]
+    return ws["facts"]
+
+
 def _write_draft(ws):
     ws["draft"] = f"Summary based on: {ws['facts']}"
     return ws["draft"]
@@ -181,7 +226,24 @@ def build_oracle_plan(variant: str = "v1") -> list[ScriptedCall]:
         ),
     ]
 
-    if variant == "v2":
+    if variant == "v3":
+        plan.append(ScriptedCall(
+            phase="analyze",
+            tool_call=ToolCall(name="parse_pdf", arguments={"source": "raw_pdf_bytes"}),
+            execute=_parse_pdf_v3,
+            step_id="parse_pdf",
+            derived_from=["fetch"],
+        ))
+        plan.append(ScriptedCall(
+            phase="analyze",
+            tool_call=ToolCall(name="summarize_pdf", arguments={"source": "page_content"}),
+            execute=_summarize_pdf,
+            step_id="summarize_pdf",
+            derived_from=["parse_pdf"],
+        ))
+        extract_fn = _extract_facts_v3
+        analyze_derived = ["summarize_pdf"]
+    elif variant == "v2":
         plan.append(ScriptedCall(
             phase="analyze",
             tool_call=ToolCall(name="parse_pdf", arguments={"source": "raw_pdf_bytes"}),
@@ -189,15 +251,17 @@ def build_oracle_plan(variant: str = "v1") -> list[ScriptedCall]:
             step_id="parse_pdf",
             derived_from=["fetch"],
         ))
+        extract_fn = _extract_facts
         analyze_derived = ["parse_pdf"]
     else:
+        extract_fn = _extract_facts
         analyze_derived = ["fetch"]
 
     plan.extend([
         ScriptedCall(
             phase="analyze",
             tool_call=ToolCall(name="extract_facts", arguments={"source": "page_content"}),
-            execute=_extract_facts,
+            execute=extract_fn,
             step_id="analyze",
             derived_from=analyze_derived,
         ),
@@ -219,5 +283,5 @@ def build_oracle_plan(variant: str = "v1") -> list[ScriptedCall]:
     return plan
 
 
-VARIANTS = ["v1", "v2"]
+VARIANTS = ["v1", "v2", "v3"]
 TASKS = [make_task(v) for v in VARIANTS]
