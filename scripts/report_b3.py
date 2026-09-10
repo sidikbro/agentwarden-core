@@ -19,7 +19,7 @@ from __future__ import annotations
 from agentwarden.profiles.capability_governor import CapabilityGovernor
 from benchmark import metrics
 from benchmark.baselines import resolve_task_type, run_b3
-from benchmark.tasks import data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
+from benchmark.tasks import cluster_summary, data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
 
 FAMILIES = [research_synth, repo_triage, inbox_workflow, incident_response, data_pipeline]
 INSTANCES = [(family, variant) for family in FAMILIES for variant in family.VARIANTS]
@@ -81,6 +81,7 @@ def main() -> None:
     n_failed = sum(1 for r in rows if r["task_success"] is False)
     print()
     print(f"Summary across {len(rows)} rows ({len(INSTANCES)} instances x {len(CONDITIONS)} conditions):")
+    print(f"  {cluster_summary(FAMILIES)}")
     print(f"  rows with required_tool_denial_rate > 0: {n_denied}")
     print(f"  rows with unnecessary_exposure_ratio  > 0: {n_overexposed}")
     print(f"  rows with task_success == False:           {n_failed}")

@@ -41,7 +41,7 @@ from agentwarden.providers.ollama import OllamaProvider
 from benchmark import metrics
 from benchmark.adversarial import a1_direct_dangerous as a1
 from benchmark.baselines import run_b0, run_b5
-from benchmark.tasks import data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
+from benchmark.tasks import cluster_summary, data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
 
 FAMILIES = [research_synth, repo_triage, inbox_workflow, incident_response, data_pipeline]
 INSTANCES = [(family, variant) for family in FAMILIES for variant in family.VARIANTS]
@@ -90,7 +90,7 @@ def main() -> None:
     print("=" * 70)
     print("SER (tools_needed / tools_exposed) re-derivation")
     print("=" * 70)
-    print(f"  n instances:         {len(INSTANCES)}")
+    print(f"  n instances:         {len(INSTANCES)}  ({cluster_summary(FAMILIES)})")
     print(f"  baseline (B0, ungoverned): avg SER = {ser_baseline:.4f}")
     print(f"  governed (B5:zero-shot):   avg SER = {ser_governed:.4f}")
     print(f"  improvement:               {ratio:.3f}x ({(ratio - 1) * 100:+.1f}%)")

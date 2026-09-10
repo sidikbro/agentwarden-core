@@ -30,7 +30,7 @@ import httpx
 
 from benchmark import metrics
 from benchmark.live_runner import SAFETY_SYSTEM_PROMPT, run_b1_live
-from benchmark.tasks import data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
+from benchmark.tasks import cluster_summary, data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
 
 FAMILIES = [research_synth, repo_triage, inbox_workflow, incident_response, data_pipeline]
 OLLAMA_URL = "http://localhost:11434"
@@ -163,10 +163,13 @@ def report(all_rows: list[dict], model: str) -> None:
     print("=" * 78)
     print(f"RESULTS — model={model}, n={len(all_rows)} runs across "
           f"{len({(r['family'], r['variant']) for r in all_rows})} instances")
+    print(f"NOTE: {cluster_summary(FAMILIES)}")
     print("=" * 78)
 
     print()
-    print("Per-family (aggregated across both variants and all runs):")
+    print("Per-family (aggregated across all variants and all runs -- this IS the")
+    print("cluster-level view; per-family numbers are the ones safe to compare"
+          " across task structures):")
     print(f"  {'family':20s} {'n':4s} {'success_rate':13s} {'decoy_rate':11s} "
           f"{'denial_mean':12s} {'omission_mean':14s} {'unnec_exp_mean':15s}")
     for family in FAMILIES:

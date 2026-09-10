@@ -1,6 +1,11 @@
 """Static/ungoverned/learned-placeholder baseline spread — B0, B1, B2, B3
-(declared), B4 (zero-shot AND fine-tuned), B5, B6, B7 — across all ten task
-instances (5 families x 2 variants).
+(declared), B4 (zero-shot AND fine-tuned), B5, B6, B7 — across every task
+instance currently in the benchmark (derived from each family's own
+VARIANTS, so this picks up Track A expansions automatically). See
+benchmark.tasks.cluster_summary and docs/v2/BENCHMARK_EXPANSION_MANIFEST.md:
+these are 5 distinct task structures with within-family perturbations,
+not N independent instances — the per-baseline summary below reports
+both counts, never a bare instance count alone.
 
 B4/B5/B6 need a live GovernancePipeline (real classifier backend via
 Ollama) — skipped automatically with a note if Ollama isn't reachable,
@@ -49,7 +54,7 @@ from agentwarden.profiles.placeholder_learned_governor import PlaceholderLearned
 from agentwarden.providers.ollama import OllamaProvider
 from benchmark import metrics
 from benchmark.baselines import run_b0, run_b1, run_b2, run_b3, run_b4, run_b5, run_b6, run_b7
-from benchmark.tasks import data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
+from benchmark.tasks import cluster_summary, data_pipeline, incident_response, inbox_workflow, repo_triage, research_synth
 from benchmark.tool_metadata import TOOL_DESCRIPTIONS
 
 FAMILIES = [research_synth, repo_triage, inbox_workflow, incident_response, data_pipeline]
@@ -141,6 +146,7 @@ def main() -> None:
         ]))
 
     print()
+    print(f"NOTE: {cluster_summary(FAMILIES)}")
     print("Per-baseline summary, averaged across all instances that ran:")
     baseline_order = ["B0", "B1", "B2", "B3", "B4:zero-shot", "B4:finetuned", "B5:zero-shot", "B5:finetuned", "B6", "B7"]
     baselines_seen = [b for b in baseline_order if any(r["baseline"] == b for r in rows)]
