@@ -227,6 +227,10 @@ is not "hand-authored" merely because a human glanced at it.
   distinguishing "mentions risk" from "is risk," so an unreviewed error
   here is exactly the kind of error the category exists to prevent. At
   ~950 examples this is a tractable requirement, not a theoretical one.
+  **Superseded in part by the 2026-10-17 amendment below** for the
+  portion of this bucket that turned out to be parametrically generated
+  rather than individually authored — read the amendment before applying
+  this bullet as written.
 - **Paraphrase-diversified (1,350): stratified sample review.** The
   underlying ground truth (tool, risk_level, category) is already
   independently authored in `tools.yaml`/`rules.yaml` — what needs
@@ -239,6 +243,44 @@ is not "hand-authored" merely because a human glanced at it.
   sampling is a cost-saving measure conditional on demonstrated low
   error, not a standing exemption applied regardless of what the sample
   finds.
+
+**Amendment (2026-10-17): hand-authored review downgraded from 100% to
+stratified sample, for the parametrically-generated majority of that
+bucket only.** When this protocol was written, "hand-authored" was
+assumed to mean ~950 individually-conceived examples, which is why 100%
+review was tractable and justified. What was actually built is a mix:
+`safe_but_defended.py` (21) and `adversarial_calibration.py` (25) — 46
+examples total — are genuinely individually-authored, one scenario at a
+time, with no shared generation logic between them; everything else in
+the hand-authored bucket (`safe_but_defended_v2.py` 641,
+`adversarial_calibration_v2.py` 300, `tool_pairing_gapfill.py` 112 — 1,053
+of the 1,099 total) was built by *parametric generation*: a small number
+of scenario skeletons per subcategory, each instantiated across
+concrete axis variations (asset type, malware family, credential
+pattern, industry, tool identity) to reach volume. Examples drawn from
+the same skeleton are correlated — if the skeleton's judgment is wrong,
+it's wrong in every instantiation, and if it's right, reading ten more
+instantiations of the same skeleton confirms the same thing ten times
+rather than surfacing ten independent judgments. Reading all 1,053 buys
+materially less per-example information than the 100%-review rule
+assumed, and the original 950-example tractability argument no longer
+holds at this composition. Reason for amending now rather than silently
+sampling against the existing 100% language: the number in this
+document is supposed to be the actual governing rule, not a formality
+worked around when inconvenient.
+
+**Revised rule:** the 46 individually-authored examples
+(`safe_but_defended.py`, `adversarial_calibration.py`) keep the 100%
+review requirement above unchanged — the correlation rationale for
+sampling does not apply to them. The 1,053 parametrically-generated
+examples instead get the same stratified-sample treatment already
+defined below for paraphrase-diversified data: stratify by skeleton
+family (the generating module) and subcategory, minimum 15% of each
+stratum or 5 examples, whichever is larger, same APPROVE/CORRECT/REJECT
+process, and **the same >5%-sampled-error-rate trigger for full-stratum
+re-review** — sampling here is conditional on demonstrated low error per
+stratum, identical in spirit to the paraphrase rule, not a lower bar
+applied because the examples happen to be called "hand-authored."
 
 **Who:** one designated human reviewer (the project owner, or whoever
 they designate as the security-judgment authority for this pass) is the

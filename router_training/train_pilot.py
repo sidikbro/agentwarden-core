@@ -74,20 +74,15 @@ OUT_DIR = Path(__file__).parent.parent / "data" / "router_training" / "PILOT_UNR
 _SCRATCH_DIR = os.environ.get("SLURM_SCRATCH_DIR")
 TRAIN_OUT_DIR = Path(_SCRATCH_DIR) / "agentwarden_pilot_checkpoint" if _SCRATCH_DIR else OUT_DIR
 
-# Mirrors agentwarden/policies/classifier.py::CLASSIFY_PROMPT exactly --
-# training input must match production input, or the model learns a
-# distribution the real classifier.py never actually sends it.
-CLASSIFY_PROMPT = """You are a security classifier for AI agent tool calls.
-Determine if the following tool call is DANGEROUS or SAFE.
-
-Tool: {tool_name}
-Arguments: {arguments}
-
-Rules:
-- DANGEROUS: shell execution, file deletion, credential access, prompt injection, subagent spawning, network exfiltration
-- SAFE: reading files, web search, memory operations, sending pre-approved messages
-
-Respond with JSON only: {{"decision": "BLOCK" or "ALLOW", "confidence": 0.0-1.0, "reason": "brief explanation"}}"""
+# Imports the SAME function production serving calls (agentwarden/policies/
+# classifier.py::build_classify_prompt) -- not a duplicated copy. A
+# duplicated CLASSIFY_PROMPT string here is exactly what let training and
+# serving silently diverge on the trailing "\n" before this fix (see
+# build_classify_prompt's docstring and docs/v2/RECONCILED_STATE_v0.2.md);
+# importing the real function makes that class of bug structurally
+# impossible instead of relying on a comment to keep two copies in sync.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from agentwarden.policies.classifier import build_classify_prompt  # noqa: E402
 
 
 def _cuda_actually_works() -> bool:
@@ -106,6 +101,62 @@ def _cuda_actually_works() -> bool:
         return True
     except Exception:
         return False
+
+
+class _CudaVerificationCallback:
+    """Confirms GPU use unambiguously in the log, not inferred from
+    torch.cuda.is_available()/jobstats. jobstats reported "GPU utilization:
+    0%" with 4.4GB GPU memory allocated and device=cuda logged on a 21s
+    run -- almost certainly a sampling artifact (jobstats polls at a fixed
+    interval; a run shorter than the interval can show 0% even while the
+    GPU was genuinely used), but "almost certainly" isn't good enough to
+    build on. This checks the two things that actually prove GPU use --
+    model parameters resident on the CUDA device, and a forward pass whose
+    OUTPUT tensor is itself on CUDA (silent CPU fallback can't fake that) --
+    and separately times every step, so a silent fallback would also be
+    obvious from speed (the CPU-only local run did 35-75s/step; see
+    hpc/README.md)."""
+
+    def __init__(self, model, cuda_ok: bool):
+        self.model = model
+        self.cuda_ok = cuda_ok
+        self._step_t0 = None
+        self._checked = False
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        self._step_t0 = time.time()
+        return control
+
+    def on_step_end(self, args, state, control, **kwargs):
+        step_time = time.time() - self._step_t0 if self._step_t0 else float("nan")
+        print(f"[step {state.global_step}] wall-clock: {step_time:.2f}s", flush=True)
+
+        if not self._checked and state.global_step == 1:
+            self._checked = True
+            param = next(self.model.parameters())
+            params_on_cuda = param.device.type == "cuda"
+
+            fwd_ran_on_cuda = False
+            fwd_error = None
+            try:
+                probe = torch.randint(0, 1000, (1, 8), device=param.device)
+                with torch.no_grad():
+                    out = self.model(input_ids=probe)
+                fwd_ran_on_cuda = out.logits.device.type == "cuda"
+            except Exception as e:
+                fwd_error = repr(e)
+
+            verdict = "PASS" if (self.cuda_ok and params_on_cuda and fwd_ran_on_cuda) else "FAIL"
+            if not self.cuda_ok:
+                verdict = "N/A (cuda_ok=False, expected CPU)"
+            print(
+                f"[GPU VERIFICATION step 1] verdict={verdict} "
+                f"params_device={param.device} params_on_cuda={params_on_cuda} "
+                f"forward_output_device={'cuda' if fwd_ran_on_cuda else ('cpu/error' if fwd_error is None else 'error: ' + fwd_error)} "
+                f"step_wall_clock={step_time:.2f}s",
+                flush=True,
+            )
+        return control
 
 
 class _CopyCheckpointToHomeCallback:
@@ -158,10 +209,7 @@ def load_examples(path: Path) -> list[dict]:
 
 
 def to_training_pair(ex: dict) -> tuple[str, str]:
-    prompt = CLASSIFY_PROMPT.format(
-        tool_name=ex["tool_name"],
-        arguments=json.dumps(ex["arguments"], ensure_ascii=False)[:500],
-    )
+    prompt = build_classify_prompt(ex["tool_name"], ex["arguments"])
     target = json.dumps({
         "decision": ex["decision"],
         "confidence": 0.9,
@@ -232,7 +280,9 @@ def main() -> None:
 
     def tokenize(example):
         prompt, target = example["prompt"], example["target"]
-        full = prompt + "\n" + target + tokenizer.eos_token
+        # prompt already ends with "\n" -- build_classify_prompt() bakes it
+        # in now, not appended here (see that function's docstring).
+        full = prompt + target + tokenizer.eos_token
         enc = tokenizer(full, truncation=True, max_length=256, padding="max_length")
         enc["labels"] = list(enc["input_ids"])
         return enc
@@ -261,7 +311,7 @@ def main() -> None:
         use_cpu=not cuda_ok,
     )
 
-    callbacks = []
+    callbacks = [_CudaVerificationCallback(model, cuda_ok)]
     if _SCRATCH_DIR:
         callbacks.append(_CopyCheckpointToHomeCallback(OUT_DIR))
 

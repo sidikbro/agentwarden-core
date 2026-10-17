@@ -16,7 +16,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=03:00:00
-#SBATCH --mem=24G
+#SBATCH --mem=8G
 #SBATCH --output=hpc/logs/%x-%j.out
 #SBATCH --error=hpc/logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -32,12 +32,16 @@
 #   at 35-75s/step with no GPU acceleration at all, so a real GPU should
 #   be at least an order of magnitude faster per step. Lower this once
 #   you've seen an actual runtime in the .out log.
-# --mem=24G: the cluster's stated default per GPU, NOT raised. This
-#   pilot's resident footprint is small — a 1.5B-param model in bf16
-#   (~3GB) plus a rank-8 LoRA adapter on 2 projection matrices (~1M
-#   params) plus a 64-example, max_length=256 dataset. Nowhere near 24G.
-#   Raise this only if a future run (bigger batch/dataset/rank) actually
-#   needs it, with the same kind of justification, not preemptively.
+# --mem=8G: lowered from the cluster's 24G default after attempt 1's
+#   jobstats showed actual RAM use of only 1.6GB (of the requested 24G) --
+#   this is HOST (CPU-side) memory, separate from the 4.4GB GPU memory the
+#   same job used, which --gpus=rtx_3090:1 governs on its own and is not
+#   affected by this setting. 8G keeps a real margin over the measured
+#   1.6GB (dataloader workers, HF Hub download buffering on a cold cache,
+#   etc.) without holding 24G of a shared resource idle for a job that
+#   doesn't need it. Raise this again, with the same kind of measured
+#   justification, only if a future run (bigger batch/dataset/rank)
+#   actually needs more.
 # --gpus=rtx_3090:1 / no --partition: if this job stays PENDING in
 #   `squeue --me` for longer than expected, check `sinfo -o "%P %G"` for
 #   the GPU partition's name and add `#SBATCH --partition=<name>` —

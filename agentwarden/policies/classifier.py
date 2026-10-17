@@ -59,6 +59,32 @@ Rules:
 Respond with JSON only: {{"decision": "BLOCK" or "ALLOW", "confidence": 0.0-1.0, "reason": "brief explanation"}}"""
 
 
+def build_classify_prompt(tool_name: str, arguments: dict[str, Any]) -> str:
+    """The ONE place the classifier's LLM input string is built — training
+    (router_training/train_pilot.py) and every serving backend here must
+    call this, never re-derive the format themselves. This is the second
+    train/serve format bug at this exact boundary (the first was the
+    decision/action JSON-key mismatch handled below in evaluate()); a
+    single shared builder makes a third one structurally impossible
+    instead of relying on comments to keep two copies in sync.
+
+    The trailing "\\n" is not cosmetic: the PILOT_UNREVIEWED_DATA_checkpoint
+    adapter was trained on `prompt + "\\n" + target`, and confirmed via the
+    classifier_canary_check.py smoke test to emit EOS immediately on ~every
+    input when queried without it (fixed here, not patched around in the
+    caller) -- see docs/v2/RECONCILED_STATE_v0.2.md for the empirical
+    before/after. Any future checkpoint retrained against this function
+    stays correct by construction.
+    """
+    return (
+        CLASSIFY_PROMPT.format(
+            tool_name=tool_name,
+            arguments=json.dumps(arguments, ensure_ascii=False)[:500],
+        )
+        + "\n"
+    )
+
+
 @register_policy
 class LLMClassifierPolicy(PolicyPlugin):
     """
@@ -157,10 +183,7 @@ class LLMClassifierPolicy(PolicyPlugin):
 
     def _classify(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Route to the available classifier backend."""
-        prompt = CLASSIFY_PROMPT.format(
-            tool_name=tool_name,
-            arguments=json.dumps(arguments, ensure_ascii=False)[:500],
-        )
+        prompt = build_classify_prompt(tool_name, arguments)
 
         # Priority 1: local GGUF model (fine-tuned agentwarden-router)
         if self.model_path and os.path.exists(self.model_path):
