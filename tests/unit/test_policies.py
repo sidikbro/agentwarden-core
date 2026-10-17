@@ -10,6 +10,7 @@ from agentwarden.core.models import (
 )
 from agentwarden.policies.rules import RuleBasedPolicy
 from agentwarden.policies.router import SafetyRouter
+from agentwarden.policies.approval_gate import ApprovalGatePolicy
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -28,11 +29,9 @@ class TestRuleBasedPolicy:
     def setup_method(self):
         self.policy = RuleBasedPolicy()
 
-    # Always-block tools
+    # Always-block tools — irreducible, no argument/context makes these safe
     @pytest.mark.parametrize("tool", [
-        "exec", "execute", "bash", "shell", "terminal",
-        "sessions_spawn", "task", "spawn", "subagent", "subagents",
-        "process", "sudo",
+        "exec", "execute", "bash", "shell", "terminal", "spawn", "sudo",
     ])
     def test_always_block_tools(self, tool):
         req = make_request(tool, {"cmd": "ls"})
@@ -40,6 +39,17 @@ class TestRuleBasedPolicy:
         assert d.decision == Decision.BLOCK
         assert d.reason == BlockReason.ALWAYS_BLOCK_TOOL
         assert d.confidence == 1.0
+
+    # route_to_review tools (D3 approval gate) — conditionally legitimate,
+    # so Stage 1 (rules) alone must NOT block them; ApprovalGatePolicy is
+    # the stage that downgrades an otherwise-ALLOW to REVIEW.
+    @pytest.mark.parametrize("tool", [
+        "sessions_spawn", "task", "subagent", "subagents", "process", "kill",
+    ])
+    def test_route_to_review_tools_not_blocked_by_stage1_alone(self, tool):
+        req = make_request(tool, {"cmd": "ls"})
+        d = self.policy.evaluate(req)
+        assert d.decision == Decision.ALLOW
 
     # Safe tools should pass
     @pytest.mark.parametrize("tool", [
@@ -97,7 +107,7 @@ class TestRuleBasedPolicy:
 
     def test_custom_always_block(self):
         """Custom tool names can be added to always_block."""
-        policy = RuleBasedPolicy(always_block={"deploy_to_prod"})
+        policy = RuleBasedPolicy(extra_always_block={"deploy_to_prod"})
         # Custom tool blocked
         assert policy.evaluate(make_request("deploy_to_prod", {})).decision == Decision.BLOCK
         # Default tools also still blocked
@@ -132,10 +142,33 @@ class TestSafetyRouter:
         d = self.router.inspect(req)
         assert d.decision == Decision.BLOCK
 
-    def test_blocks_sessions_spawn(self):
+    def test_sessions_spawn_not_blocked_by_rules_alone(self):
+        """sessions_spawn moved to route_to_review (D3 approval gate) —
+        SafetyRouter only wraps Stage 1 (rules) + Stage 2 (classifier), it
+        does not include ApprovalGatePolicy, so with the classifier
+        disabled there is nothing left to escalate this call. This is a
+        property of SafetyRouter specifically, not of the real pipeline
+        (build_pipeline() includes the approval gate; see
+        test_benchmark_pipeline_integration.py for that path)."""
         req = make_request("sessions_spawn", {"agent": "malicious"})
         d = self.router.inspect(req)
-        assert d.decision == Decision.BLOCK
+        assert d.decision == Decision.ALLOW
+
+    def test_kill_review_gate_downgrades_allow_to_review(self):
+        req = make_request("kill", {"pid": 1234})
+        rules_decision = RuleBasedPolicy().evaluate(req)
+        assert rules_decision.decision == Decision.ALLOW  # Stage 1 no longer blocks it
+
+        gate = ApprovalGatePolicy()
+        assert gate.is_applicable(req)
+        d = gate.evaluate(req)
+        assert d.decision == Decision.REVIEW
+        assert "approval" in d.reason_detail.lower()
+
+    def test_approval_gate_not_applicable_to_irreducible_always_block(self):
+        req = make_request("exec", {"cmd": "id"})
+        gate = ApprovalGatePolicy()
+        assert not gate.is_applicable(req)
 
     def test_router_policies_list(self):
         """Without classifier, router should have exactly 1 policy (rules)."""

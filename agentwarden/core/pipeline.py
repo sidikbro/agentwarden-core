@@ -126,8 +126,19 @@ class GovernancePipeline:
                         "[SHADOW] Would block | tool=%s | reason=%s | stage=%s",
                         req.tool_call.name, decision.reason, decision.stage,
                     )
+                elif decision.decision == Decision.REVIEW:
+                    logger.info(
+                        "[SHADOW] Would require review | tool=%s | reason=%s | stage=%s",
+                        req.tool_call.name, decision.reason_detail, decision.stage,
+                    )
             elif decision.decision == Decision.ALLOW:
                 allowed.append(req)
+            elif decision.decision == Decision.REVIEW:
+                logger.info(
+                    "[REVIEW] tool=%s | reason=%s | stage=%s | latency=%.1fms",
+                    req.tool_call.name, decision.reason_detail,
+                    decision.stage, decision.latency_ms or 0,
+                )
             else:
                 logger.info(
                     "[BLOCK] tool=%s | reason=%s | stage=%s | latency=%.1fms",
@@ -183,7 +194,10 @@ class GovernancePipeline:
                 )
                 continue
 
-            if decision.decision == Decision.BLOCK:
+            # BLOCK and REVIEW are both chain-terminal: once a policy
+            # decides a call should not simply execute, no later stage
+            # gets to override that back to ALLOW.
+            if decision.decision in (Decision.BLOCK, Decision.REVIEW):
                 return decision, None
 
             # Terminal policy (e.g. RL policy) stops the chain on ALLOW too
@@ -201,16 +215,13 @@ class GovernancePipeline:
                 "no_policy_ran",
             )
 
-        # All policies ran, none blocked — ALLOW
-        return (
-            GovernanceDecision(
-                request_id=request.request_id,
-                tool_name=request.tool_call.name,
-                decision=Decision.ALLOW,
-                stage="pipeline",
-            ),
-            None,
-        )
+        # All policies ran, none blocked — ALLOW. Return the real terminal
+        # stage's own decision object (its stage name, confidence, and
+        # latency_ms intact), not a synthetic stage="pipeline" record that
+        # discards which stage actually decided and how long it took.
+        # `decision` is bound here: any_policy_ran is True, and any BLOCK or
+        # terminal-policy decision already returned above.
+        return decision, None
 
     def _safe_default(
         self,

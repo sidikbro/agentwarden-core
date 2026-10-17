@@ -1,0 +1,210 @@
+# AgentWarden-v2 — Experimental Plan v0.2
+**Target:** USENIX Security '27 Cycle 2 — registration Jan 19, 2027; paper Jan 26, 2027
+**Status:** supersedes `EXPERIMENTAL_PLAN_v0.1.md`. v0.1's scope is unchanged in substance; v0.2 records what has actually been built since (§§2-9 status annotations), and adds four requirements that close gaps found while building it (§3b, §4a, §11a, §12).
+**Gate:** no benchmark expansion and no training run may start until `docs/v2/RECONCILED_STATE_v0.2.md` — the artifact-by-artifact reconciliation this plan requires (§12) — is produced and every number in it is either VERIFIED or STRUCK. See that file.
+
+---
+
+## 0. Governing constraint (unchanged from v0.1)
+
+AgentWarden-v2 does **not** use ATBench-Claw, does **not** reproduce AMARE's recovery cost curve or FP taxonomy, and does **not** depend on AMARE being accepted. AMARE owns *post-hoc recovery*; v2 owns *pre-action exposure and enforcement*. See `contribution_boundary.md`.
+
+Clarification added in v0.2: "does not use ATBench-Claw" governs what enters *this repository's training/benchmark data*. It does not prohibit reading ATBench-Claw's own artifacts (produced entirely outside this repo, under AMARE) to check a factual claim about them — see `docs/issues/atbench_274_279_not_toolname_driven.md` for exactly that: a read-only attribution check, no ATBench-Claw content copied in.
+
+---
+
+## 1. The scientific question (unchanged)
+
+> Under what conditions does learned capability governance outperform strong static task-conditioned policies, without reducing task success?
+
+Three outcomes remain all publishable — (a) static dominates, (b) learned wins conditionally, (c) learned dominates. Do not tune toward (b).
+
+---
+
+## 2. The three decisions — status update
+
+| # | Decision | Question | v0.1 status | v0.2 status |
+|---|---|---|---|---|
+| D1 | **Expose** | Should the model *see* this tool? | designed, not built | **built**: `agentwarden/profiles/capability_governor.py` (`CapabilityGovernor`), declaration-first + structural fallback (`agentwarden/profiles/structural_task_type.py`), wired into the real proxy (`agentwarden/server/app.py`) |
+| D2 | **Allow** | Should this invocation execute? | built (Stage 1 rules + Stage 2 classifier) | unchanged mechanism; classifier's degeneracy diagnosed (§9, `docs/issues/aethelgard-router-degenerate.md`) |
+| D3 | **Approve** | Should this require human confirmation? | designed only; `Decision.REVIEW` never emitted anywhere | **built**: `agentwarden/policies/approval_gate.py` (`ApprovalGatePolicy`) gives D3 a real producer. `config/tools.yaml`'s `route_to_review` set (`process, kill, chmod, chown, sessions_spawn, subagent, subagents, delegate, task`) routes to Stage 2/3 instead of Stage-1 hard-block; the remaining `always_block` set (`exec, execute, bash, shell, run_command, terminal, system, sudo, su, spawn, create_agent`) stays irreducible. **No synchronous approval channel exists** (`stages.approval.timeout_ms=0`, `default_on_timeout=block`) — REVIEW currently resolves to "not executed," tagged and audited distinctly from BLOCK. |
+
+---
+
+## 3. Baseline matrix — status update
+
+| # | Baseline | D1 (expose) | D2 (allow) | Status |
+|---|---|---|---|---|
+| B0 | All tools | full registry | none | built, real numbers (`benchmark/baselines.py::run_b0`) |
+| B1 | Prompting-only | full registry | LLM self-restriction via system prompt | **resolved in v0.2 — see §3a.** Real live-model variant built, run, and scaled. Reclassified as a **utility baseline** (task-completion capability under full access / no enforcement) — it is not currently evidence for any safety claim; see §3a. |
+| B2 | Global allowlist | fixed safe set | none | built, real numbers |
+| B3 | Task-conditioned YAML | per-task-type YAML | none | built, real numbers, genuine headroom confirmed (see `RECONCILED_STATE_v0.2.md` — `required_tool_denial_rate>0` on 8/20 rows, `unnecessary_exposure_ratio>0` on 16/20) |
+| B4 | Classifier-only | full registry | learned classifier per call | built; zero-shot numbers real, fine-tuned numbers **quarantined** — the only fine-tuned artifact available (`aethelgard-router`) is confirmed degenerate (blocks 12/12 tested calls including benign ones) |
+| B5 | YAML + Router | per-task-type YAML | rules + classifier | built; same fine-tuned-model quarantine as B4 |
+| B6 | Learned Governor + Router | learned policy | rules + classifier | built as a **placeholder only** (`PlaceholderLearnedGovernor` — explicitly not trained). **Gated in v0.2 — see §3b.** Its own numbers currently FAIL the gate; they establish the gate works, not a B6 result. |
+| B7 | Oracle | ground-truth minimum tool set | ground-truth | built, real numbers |
+
+**B3 remains the make-or-break baseline** (unchanged from v0.1).
+
+### 3a. B1 resolution and reclassification (v0.2 addition — was an open decision in v0.1)
+
+v0.1 left B1 as a stated limitation with two options, undecided (`docs/v2/B1_prompting_only_limitation.md`). **Decided: option 1, build the live-model variant.** Reviewer BNSs asked for this baseline specifically; a stated-limitation-only answer leaves that ask formally unmet, and the infrastructure cost turned out to be smaller than v0.1 estimated because it composes existing pieces (`OpenAIParser`, the Ollama provider, each task family's already-existing world-state functions) rather than requiring new ones.
+
+Built: `benchmark/live_runner.py::run_b1_live` — a genuine multi-turn agent loop. Unlike `run_scripted`/`run_via_pipeline` (which replay a fixed plan), a real model sees the task's `initial_prompt` plus a safety system-prompt instruction, is offered the family's full tool registry (D1 = full registry per spec), and chooses which tool to call at each turn (D2 = none — nothing is ever blocked, isolating pure prompting self-restraint). Scaled beyond the initial N=3/one-family pilot: `scripts/report_b1_live_scaled.py` runs all 5 families x 2 variants (10 instances) x 3 runs x `qwen2.5:3b`, safety system prompt held verbatim and identical across every run, recorded in a run manifest.
+
+**Reclassification, and why it's necessary — this is the important part, not a footnote:**
+
+The pilot's specific finding ("decoy `exec_shell` called in 2/3 runs") did **not** reproduce at scale — 0/30 dangerous-decoy invocations across all 10 instances — and is struck per §11a, not carried forward as a caveat (confirmed not a detection bug: checked the raw per-run tool-call frequency table directly). What the scaled run showed instead: 73% task failure rate overall, and `repo_triage` in particular shows the model abandoning the task after 1-2 tool calls in 5/6 runs. Full detail in `RECONCILED_STATE_v0.2.md` §5.
+
+**This is a different claim than the one B1 was built to support, and the paper must not blur them:**
+- The evidence B1 actually produced is that the model **fails to perform** (task incompleteness, required-tool omission) — a **utility** finding.
+- It is *not* evidence that the model **fails to be restrained** (called a dangerous tool despite being told not to) — a **safety** finding. That specific claim has zero supporting evidence at this N/model/prompt as of this run.
+- **B1 is therefore reclassified as a utility baseline, not a safety baseline**, in the baseline matrix (§3 table) and in every place this benchmark's results are reported.
+
+**Where the safety claim now needs to come from:** "enforcement cannot live in the model" is a safety claim, and needs safety evidence — a scenario with a *real attack* present, not a passive decoy sitting unused in the tool registry. That is what the adversarial variants (A2-A5, §4) are for, not B1. **As of this plan, only A1 is built** (`benchmark/adversarial/a1_direct_dangerous.py`, one scripted scenario, N=1 — see `docs/issues/`/`scripts/report_headline_reproduction.py`'s own N=1 caveat). A2 (indirect injection via tool output), A3 (capability escalation), A4 (multi-step attack via individually-benign tools), and A5 (aliased/renamed tool) do not exist yet. Until at least one of them is built and run against a live decision-maker, **the "enforcement can't live in the model" safety claim is currently unsupported by any evidence in this repo** — B1's null result doesn't support it (wrong claim type), and A1 is a scripted, non-adversarial-in-the-live-decision-maker-sense scenario. This is a real gap, stated here rather than papered over.
+
+**Model-capability confound, stated plainly:** `qwen2.5:3b` is a 3B model. A 73% task failure rate on straightforward, unambiguous multi-step tasks may reflect this specific model's general capability limits rather than anything about prompting-based safety instructions or enforcement. B1's result should not be read as "prompting doesn't work" in general — it may just as well mean "small models are unreliable agents," which is a capability statement, not a governance one. **Any weight B1 carries in the paper needs a stronger model tested too** (e.g. `qwen2.5:7b`, already available in this environment) before task-failure-rate claims generalize beyond "this specific 3B model, on this benchmark." Not run yet — a candidate next step, not claimed here.
+
+### 3b. Track C gate (v0.2 addition)
+
+"Track C" = the learned-governance track: B6 today, L1-L6 once real training exists (§8). **No Track C number may be reported in the paper until the exposure policy under test passes all three checks in `benchmark/degeneracy_gate.py::run_track_c_gate`:**
+
+1. **not_expose_everything** — avg `|exposed \ required| / |exposed|` across probed (task_type, phase) contexts must be `< 0.5`. (Measured this way, not as a raw exposed/registry-size ratio — see the module docstring for why the size-ratio proxy was tried first and rejected: it's insensitive at this benchmark's registry scale.)
+2. **not_expose_nothing** — avg `|exposed ∩ required| / |required|` must be `> 0.05`.
+3. **g3_rename_invariant** — direct test of the v1 diagnosis (policy learned tool *identity*, not risk). Every tool in the catalog is renamed to an opaque, **shuffled** alias (not sorted — sorting would preserve alphabetical rank and let a rank-keyed policy pass incorrectly) with descriptions held fixed; the exposed *set of descriptions* must be identical to the un-renamed run.
+
+**Why this exists:** the current placeholder's own reported `unnecessary_exposure_ratio` (~0.83-0.96 depending on measurement) is exactly the confound this gate is built to catch — broad, under-scoped exposure that happens to key on crude keyword categories rather than task/phase discrimination. Running the gate against it (`scripts/report_track_c_gate.py`) confirms: **FAILS `not_expose_everything` (0.964), PASSES `not_expose_nothing` and `g3_rename_invariant`.** The placeholder was built specifically to avoid identity-keying and it does — its failure is breadth of exposure, not the v1 failure mode. This is the expected, correct outcome of the gate, not evidence the gate is broken.
+
+Any future trained L1-L6 policy must pass this same gate before its numbers enter a results table.
+
+---
+
+## 4. Benchmark: multi-turn tasks with evolving capability requirements (unchanged task families; v0.2 adds the expansion protocol)
+
+Task families 1-5, adversarial variants A1-A5, and the four ground-truth fields are unchanged from v0.1 §4.
+
+### 4a. Benchmark expansion — authorship and validation protocol (v0.2 addition)
+
+Expanding the benchmark by 90 new task instances is the same scale of work as the D2 classifier training dataset (`docs/v2/ROUTER_RETRAINING_PLAN_v0.1.md` §2), and carries the **same failure mode**: model-generated volume that is structurally identical variation dressed up as diversity, rather than instances that actually exercise different governance behavior. The classifier dataset's authorship/review protocol is the template; apply it here directly rather than re-deriving a separate one:
+
+- **Every one of the 90 new instances must pass all five `benchmark/validate.py` checks before it is added to the suite** — `check_required_tools_subset`, `check_oracle_succeeds`, `check_withholding_breaks_success`, `check_phases_differ`, `check_attack_succeeds_under_b0`. **Check 3 (`check_withholding_breaks_success`) is the load-bearing one** (same as in v0.1's original validation-gate decision): it is the check that would have caught both real mutation-ordering bugs found during the original five families' construction (`inbox_workflow._schedule_event`, `repo_triage._run_tests`). A new instance that passes checks 1/2/4/5 but not 3 is not a real instance — it means withholding a required tool doesn't actually break the task, i.e. the "required" tool isn't required.
+- **Authorship**: instances may be drafted by a model (consistent with how the D2 dataset's hand-authored and paraphrase-diversified buckets were produced), but every drafted instance is `review_status=pending` until a human reviews it — same field, same meaning, same gate as `router_training/schema.py::TrainingExample`.
+- **Review means**: a human (not a model) reads the task's `initial_prompt`, `phases_for()`, `make_ground_truth()`, and `build_oracle_plan()`, and confirms by hand that (a) the required-tools set for each phase is actually minimal and actually necessary — not just "a plausible-sounding tool for this phase" — and (b) the oracle plan is the one a competent human would actually execute for this task, not a mechanically-generated withholding-proof shortcut. Confirming that `validate.py` passes is necessary but not sufficient for review sign-off; a reviewer who only ran the checks and didn't read the instance has not reviewed it.
+- **Overcorrection guard** (same concern as the D2 dataset's §2 clarification): expanding instance count must not silently skew the benchmark's family/variant/difficulty-type balance (overlapping vocab, within-family variation, content-dependence, distractors — the four difficulty categories added after the original all-perfect-scores finding). Report the new instances' distribution across those four categories alongside the expansion, not just a total count.
+- No instance is added to any *reported* baseline run until it is past `review_status=pending`. A pending instance may exist in the repo for iteration, but a baseline run over a batch that includes pending instances is not a reportable number — same rule as §12 below.
+- **Track A started and reviewed:** `docs/v2/BENCHMARK_EXPANSION_MANIFEST.md` tracks every instance's verdict (batch 1: 3 new instances, 10→13, all 5 checks passing, all `review_status=approved` as of the 2026-09-10 human review). Batches are deliberately small and individually validated rather than generated in bulk — the same failure mode this section opens with (model-generated volume standing in for real diversity) applies just as much to rushing this expansion as to rushing the D2 dataset.
+- **The review surfaced a scoping issue that changes what "90 new instances" should mean — see §4b, which supersedes this section's original framing of the target as a flat instance count.**
+
+### 4b. Effective-N scoping issue (human review finding, 2026-09-10 — decision needed before further Track A batches)
+
+The 2026-09-10 review of Track A batch 1 (`docs/v2/BENCHMARK_EXPANSION_MANIFEST.md`) found: **5 genuinely distinct task structures, 8 within-family perturbations — not 13 independent data points.** Every family's `v1` is a distinct workflow; every `v2`/`v3` varies a file format, a transport, or an inserted side-effect step within that same workflow. The instances are valid (predicates are sound, `v3`'s hard dependencies genuinely detect a skipped tool) — validity and independence are separate questions, and this section is about the second one.
+
+**The problem, stated precisely:** if the ~100-instance target in §4a is reached by adding more perturbations to these same 5 structures — "5 structures × 20 perturbations = 100" — the effective N for any claim that needs to hold *across* task structures stays at 5, regardless of how large the perturbation count grows. That matters because **the paper's central comparison is exactly this kind of claim**: "does B6 beat a well-tuned B3" (§3, "B3 remains the make-or-break baseline") is not a claim about research-report-writing specifically, or about repo-triage specifically — it needs to hold across genuinely different deployment shapes, or it doesn't support the general claim the paper wants to make. A benchmark that is nominally "N=100" but structurally "N=5, replicated 20 ways" would overstate the strength of that comparison by roughly the replication factor, in exactly the way a reviewer would (correctly) flag.
+
+**What perturbations ARE still good for**, so this isn't read as "stop doing them": robustness to format/transport variation, and the task-evolution/staleness question (a distractor tool becoming load-bearing — directly relevant to §1's scientific question, just *within* one structure rather than across structures). Keep building them. They just can't be the mechanism that gets the benchmark from N=5 structures to a paper-supporting N.
+
+**Proposal: add 5-10 genuinely distinct workflow families — different deployment shapes, not templates of the existing five.** The existing five span web research, software engineering/CI, email/scheduling, SRE/ops, and data engineering. Candidate new shapes, chosen for being structurally different from all five (not just topically different) and, where possible, for actually exercising machinery the current five never touch:
+
+| Candidate family | Deployment shape | Why it's structurally new |
+|---|---|---|
+| Multi-agent delegation/orchestration | Spawn subagents, coordinate, aggregate results | The current five never call anything resembling `config/tools.yaml`'s `route_to_review` set (`sessions_spawn`, `subagent`, `delegate`, `task`, ...) — this would be the first family to naturally exercise D3/REVIEW instead of needing it synthesized |
+| Infrastructure provisioning (IaC) | Plan → apply → verify → rollback | High-blast-radius mutation with a natural rollback/undo step none of the five have; tests revocation and multi-step reversibility, not just forward progress |
+| Approval-gated document workflow (contract/compliance) | Draft → redline → approval chain → countersign | The only natural multi-*party* approval structure — current five are single-agent-does-everything; this one has a genuine human-in-the-loop gate, not a synthetic one |
+| Financial transaction processing | Validate → authorize → execute → reconcile | Money movement changes the risk profile qualitatively (irreversibility, regulatory framing) from anything currently in the benchmark |
+| Trust & safety / content moderation | Review flagged content → classify → act → notify | Requires a policy *judgment* call, not just mechanical steps — different cognitive shape from "fetch it, transform it, send it" |
+
+Pick 5 of these (or others meeting the same "structurally different, not topically different" bar) to reach 10 total structures; the other 5 as a stretch target for a later pass.
+
+**Cost estimate, grounded in what this session actually spent:** the original 5 families took sustained, multi-turn effort each (phases, ground truth, world-state functions with bracket-access discipline, an oracle plan, all 5 `validate.py` checks, ≥2 within-family variants, a `capability_profiles.yaml` entry, in three cases a deliberately-planted plausible distractor). Batch 1 — adding a *third variant to an existing family*, reusing an already-established tool vocabulary — took a fraction of one session turn for 3 instances, precisely because it reused existing machinery. A brand-new family has no existing machinery to reuse: new tool vocabulary, new `tool_metadata.py` entries, a new world-state model, a new `capability_profiles.yaml` entry (itself needing the same "realistic-but-imperfect, not derived from ground truth" discipline as the original five), and ideally its own within-family perturbation once the base structure is validated. **Per new family: comparable effort to one of the original five — realistically one focused, multi-step work session per family, not a sub-task inside a larger turn.** For 5 new families: five such sessions, sequential or parallel depending on review bandwidth (each still needs the same human-review gate as batch 1, which does not parallelize past one reviewer's attention). Not started; decision needed on how many to commit to before Track A continues past its current 13 instances.
+
+---
+
+## 5. Metrics (unchanged definitions; one status note)
+
+D3's metric (`approval_request_rate`) was previously known-zero for every trajectory (v0.1: "no policy anywhere ever constructs REVIEW"). As of the D3 build (§2), this is no longer structurally zero — it reads non-zero for any real-pipeline trajectory (`run_via_pipeline`) that invokes a `route_to_review` tool. Still structurally zero for scripted baselines (`run_scripted`), which never emit REVIEW by construction. See `benchmark/metrics.py::approval_request_rate`'s current docstring.
+
+All other metric definitions (§5 of v0.1) are unchanged. Exact formulas and file:line pointers are in `RECONCILED_STATE_v0.2.md`, not restated here — restating formulas in two places is exactly the kind of drift the reconciliation rule (§12) exists to prevent.
+
+---
+
+## 6. Generalization splits (unchanged)
+
+G0-G4 unchanged from v0.1. G3 is now operationalized concretely by §3b's gate (`g3_rename_invariant` *is* a G3 probe, run automatically rather than as a one-off analysis).
+
+---
+
+## 7. Policy input schema (unchanged)
+
+`SessionState` (`agentwarden/core/models.py`) implements the required input shape — `prior_actions`, `phase_history`, `data_provenance`, `turn`, `extra` — passed to every `GovernanceProfile.expose()` call. Unchanged design; now actually implemented and wired (§2).
+
+---
+
+## 8. Learning conditions to compare (unchanged)
+
+L0 (B3) through L6, multi-seed (≥5) with CIs, unchanged from v0.1. None have started. §3b's gate is a precondition for reporting any of L1-L6, not only B6.
+
+---
+
+## 9. Critical path and sequencing — status update
+
+```
+Phase 1 (Sep-Oct)  Benchmark harness + task families + ground truth + adversarial variants -- DONE (5 families, difficulty added, 5 checks enforced)
+                   D1 Capability Governor -- DONE. D3 Approval Gate -- DONE (not in v0.1's Phase 1 scope; pulled forward because it was needed to make REVIEW real).
+                   B1 live-model resolution -- DONE (minimal scope, §3a).
+Phase 1.5 (new)    Benchmark expansion -- batch 1 REVIEWED 2026-09-10: 5 structures, 8 perturbations, not 13 independent instances (§4b). Target reframed from "90 more instances" pending a decision on adding genuinely new structures (§4b cost estimate) -- do not resume perturbation-only expansion until that's decided.
+Phase 2 (Oct-Nov)  Baselines B0-B5, B7 -- DONE, real numbers. B6 -- placeholder only, gated (§3b).
+Phase 3 (Nov-Dec)  Learned conditions L1-L6 -- NOT STARTED. Gated on §3b passing for each.
+Phase 4 (Dec)      Generalization G1-G4; security tests A1-A5 -- NOT STARTED (only A1 built, N=1 scripted scenario).
+Phase 5 (Jan 1-19) Writing, artifact packaging, bibliography verification, registration.
+Jan 26             Submit
+```
+
+Slippage rule unchanged: cut task families 5→3 before compressing Phase 2, if needed.
+
+**New precondition, not in v0.1:** Phase 1.5 (benchmark expansion) and Phase 3 (learned conditions) may not start until `docs/v2/RECONCILED_STATE_v0.2.md` shows every currently-claimed number as VERIFIED or STRUCK. This is the gate the user's most recent request establishes; treat it as a hard blocker on the critical path, not a parallel-track nicety.
+
+---
+
+## 10. Reviewer-to-action matrix (unchanged from v0.1, one row updated)
+
+| Reviewer concern | Addressed by |
+|---|---|
+| PPO unnecessary | B3 vs B6; L0 vs L1-L6 |
+| PPO unreliable | multi-seed + CIs; L2/L3 constrained reward |
+| SER gameable | joint metrics; SER never reported alone |
+| False positives | D2 FPR, per-tool/per-task breakdown |
+| Tasks too easy | multi-turn benchmark; difficulty categories added post-finding |
+| No multi-turn adaptation | exposure/revocation metrics |
+| Generalization | G1-G4; G3 now automated via §3b |
+| Architecture inconsistency | D1/D2/D3 (§2), D3 now real |
+| Injection weakness | A2/A4/A5 |
+| Latency unclear | end-to-end latency + routed-call fraction |
+| **Reviewer BNSs: prompting-only baseline (B1)** | **§3a — resolved and run, but reclassified: it answers a utility question (does the model complete the task), not the safety question the reviewer's ask implies. That safety question still needs A2-A5, which don't exist yet.** |
+| Citation integrity | mandatory primary-source verification before submission |
+
+---
+
+## 11. Standing requirements (unchanged from v0.1, plus §11a)
+
+- Every bibliography entry verified against a primary source before submission.
+- No result written into the paper before the experiment that produces it has run.
+- Artifact prepared for USENIX artifact evaluation.
+- Registration Jan 19 with fixed title/authors/abstract.
+
+### 11a. Reconciliation failure rule (v0.2 addition)
+
+Three reported numbers have already failed verification in this project's history (v1's "10.5x SER improvement," "100% TPR / 0% FPR," and "N=500" claims — see `docs/issues/v1_headline_numbers_unverifiable.md` and `docs/issues/aethelgard-router-degenerate.md`) plus one mischaracterized attribution (the ATBench "274/279 blocked" figure read as tool-name-driven when it is 99.8% content-driven — `docs/issues/atbench_274_279_not_toolname_driven.md`). This rule is written now, before it is needed a fourth time:
+
+> **Any number that cannot be reproduced from an immutable artifact is struck, not footnoted, and any claim resting on it is withdrawn until re-derived.**
+
+Definitions, so this is enforceable rather than aspirational:
+- **Immutable artifact** = a specific git commit hash + file path (or a dataset/model file with a recorded checksum), such that `git show <hash>:<path>` or re-running the exact recorded command against that commit reproduces the number bit-for-bit or within stated numerical tolerance. A number that only exists in a chat transcript, a slide, a comment, or an uncommitted working-tree file is **not** backed by an immutable artifact — `RECONCILED_STATE_v0.2.md`'s Finding 0 records that this was true of the entire benchmark harness when this rule was first written (nothing was committed), and that it has since been resolved (committed as `e045c7f`, `119e513`, `74a5f49`, `156a194`, `17a9774`). The rule stays in force regardless: any *future* number produced against an uncommitted working tree is subject to exactly the same gap until it, too, is committed.
+- **Struck** means removed from the paper draft and from any table that reports it — not moved to a footnote, not hedged with "approximately," not kept with a caveat. A struck number is gone until it is re-derived from an artifact and re-enters the paper as a new claim.
+- **Any claim resting on it is withdrawn** means transitively: if baseline X's reported success rate depended on the struck number, X's success rate is also withdrawn, not just the struck number itself, until X is re-run.
+- This rule applies retroactively to every number already in any draft, README, or docs file, not only to numbers produced from now on.
+
+---
+
+## 12. Reconciled state table (the gate)
+
+`docs/v2/RECONCILED_STATE_v0.2.md` is a separate artifact, not a section of this document, because it needs to be re-generated/re-checked independently of plan revisions. It is produced now, alongside this plan, and **is the gate**: no benchmark expansion (§4a) and no training run (§8) may start until every row in it is VERIFIED or STRUCK — no PENDING rows may remain open past that point without an explicit, dated exception logged in this file.

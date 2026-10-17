@@ -150,7 +150,13 @@ SER = tools_needed / tools_exposed
 A SER of 1.0 means the agent only has access to exactly the tools it needs.
 A SER of 0.1 means the agent has 10× more tools than necessary — high risk surface.
 
-The RL policy optimises for SER — dynamically reducing exposed tools per session based on task type. Baseline (no governance): SER ≈ 0.06. With AgentWarden RL policy: SER ≈ 0.557 (real-session evaluation).
+The RL policy optimises for SER — dynamically reducing exposed tools per session based on task type.
+
+**Note (2026-09):** this section previously claimed "Baseline: SER ≈ 0.06, governed: SER ≈ 0.557" (a ~9.3× improvement). That baseline figure was not traceable to any evaluation run in this project's history — see [`docs/issues/v1_headline_numbers_unverifiable.md`](issues/v1_headline_numbers_unverifiable.md) for the full investigation and evidence. Re-derived cleanly on the v2 benchmark instead, with a verified non-degenerate classifier (`scripts/report_headline_reproduction.py`) — a controlled, scripted-task measurement, not the live "real-session evaluation" the original figure claimed to be:
+
+Baseline (ungoverned, B0): SER ≈ 0.607. Governed (B5, real Governor + real Router): SER ≈ 0.840. **Improvement: 1.384× (N=10 task instances.)**
+
+Separately, capability-scoping ablation (Governor + Router + policy vs. ungoverned baseline, N=124 tasks per condition) showed a **+191–192% SER improvement** — this figure traces cleanly to a real evaluation and is not affected by the correction above.
 
 ---
 

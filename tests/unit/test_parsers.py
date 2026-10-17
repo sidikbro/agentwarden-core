@@ -193,7 +193,7 @@ class TestHermesParser:
     ])
     def test_tool_name_normalisation(self, name, expected):
         parser = HermesParser()
-        assert parser._norm(name) == expected
+        assert parser._normalise(name) == expected
 
 
 # ── DeepAgents Parser ─────────────────────────────────────────────────────────

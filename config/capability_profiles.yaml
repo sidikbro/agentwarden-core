@@ -1,0 +1,127 @@
+# AgentWarden Capability Governor — D1 exposure profiles
+# =========================================================
+# task_type -> phase -> tool set. This is the single source of truth for
+# which tools a model gets to SEE for a given task type at a given point in
+# a multi-turn session. Edit this file to tune D1 without touching Python.
+#
+# IMPORTANT — this file is a HAND-AUTHORED, REALISTIC-BUT-IMPERFECT static
+# policy. It is deliberately NOT derived from the benchmark's own ground
+# truth (benchmark/tasks/*.py), and there is no test asserting it matches
+# ground truth exactly — an earlier version of this file was built by
+# mechanically copying each task family's minimum_required_tools, which
+# made B3 (task-conditioned YAML) score perfectly on every metric by
+# construction: it was running with the answer key. A static profile
+# author in practice doesn't have ground truth; they have a reasonable
+# guess, which is sometimes too broad (a plausible-sounding tool that
+# turns out never to be needed) and sometimes too narrow (a case they
+# never anticipated). Both kinds of mistake are deliberately present below
+# — see each family's comment for which.
+#
+# Lookup rule (see CapabilityGovernor.expose()):
+#   1. profiles[task_type] if present, else profiles["unknown"]
+#   2. within that profile: phases[phase] if phase is given and known,
+#      else "default"
+#   3. subtract tools.yaml's always_block set unconditionally — a YAML
+#      authoring error here can never expose an always-blocked tool.
+#
+# Restart the proxy / re-instantiate CapabilityGovernor to apply changes.
+
+profiles:
+
+  research_synth:
+    # search -> fetch -> analyze -> write -> send
+    # analyze: the author reasoned "research tasks might need to
+    # summarize PDFs" and added summarize_pdf defensively -- but the real
+    # research_synth (v2) source is a PDF that needs *parsing* first
+    # (parse_pdf), which the author never anticipated. Result: v1 gets an
+    # unused tool exposed (unnecessary_exposure_ratio > 0); v2 is denied
+    # the tool it actually needs (required_tool_denial_rate > 0, and the
+    # task fails under B3).
+    phases:
+      search:  [search_web]
+      fetch:   [fetch_url]
+      analyze: [extract_facts, summarize_pdf]
+      write:   [write_draft]
+      send:    [send_email]
+    default: []   # exposed when phase is None or not one of the above
+
+  summarisation:
+    phases: {}
+    default: [read, read_file]
+
+  web_research:
+    phases:
+      search: [web_search]
+      fetch:  [web_fetch]
+    default: [web_search]
+
+  file_read:
+    phases: {}
+    default: [read, read_file, ls, glob, grep]
+
+  email:
+    phases: {}
+    default: [read, send_email]
+
+  repo_triage:
+    # inspect -> read -> edit -> test -> commit
+    # edit: the author defensively added run_linter (reasoning "CI
+    # probably wants a lint pass") but never saw a fix that required a
+    # database migration (run_migration, needed by v2). Same two-sided
+    # mistake as research_synth: unused tool on v1, denied tool on v2.
+    phases:
+      inspect: [inspect_repo]
+      read:    [read_code]
+      edit:    [edit_code, run_linter]
+      test:    [run_tests]
+      commit:  [commit_changes]
+    default: []
+
+  inbox_workflow:
+    # read -> open_attachment -> extract_dates -> schedule -> reply
+    # open_attachment: the author only ever saw plain-text attachments and
+    # never added parse_pdf -- v2's PDF-agenda case is denied outright and
+    # fails. No distractor here, to keep at least one family's mistake
+    # purely in the under-provisioning direction rather than mixed.
+    phases:
+      read:            [read_email]
+      open_attachment: [open_attachment]
+      extract_dates:   [extract_dates]
+      schedule:        [schedule_event]
+      reply:           [send_reply]
+    default: []
+
+  incident_response:
+    # read_alert -> query_logs -> correlate -> remediate
+    # query_logs (phase name; tool need varies by variant): the author
+    # defensively added query_traces (reasoning "distributed tracing might
+    # help root-cause") but never anticipated a metrics-only incident
+    # (query_metrics, needed by v2) -- v1 carries an unused tool, v2 is
+    # denied and fails.
+    phases:
+      read_alert: [read_alert]
+      query_logs: [query_logs, query_traces]
+      correlate:  [correlate_events]
+      remediate:  [apply_remediation]
+    default: []
+
+  data_pipeline:
+    # locate -> fetch -> transform -> validate -> export
+    # fetch: the author knows sources can be S3 or a URL and can't predict
+    # which ahead of time, so BOTH fetch_data and fetch_url are included
+    # defensively. Unlike the other families, this doesn't deny anything
+    # (both variants succeed) -- it demonstrates the OTHER direction pure
+    # over-provisioning takes when a static policy plays it safe: every
+    # instance carries a tool it didn't need, permanently.
+    phases:
+      locate:    [locate_source]
+      fetch:     [fetch_data, fetch_url]
+      transform: [transform_data]
+      validate:  [validate_data]
+      export:    [export_data]
+    default: []
+
+# Fallback profile used when task_type has no entry above.
+unknown:
+  phases: {}
+  default: []
