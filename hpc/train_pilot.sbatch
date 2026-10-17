@@ -15,12 +15,12 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=01:00:00
+#SBATCH --time=03:00:00
 #SBATCH --mem=24G
 #SBATCH --output=hpc/logs/%x-%j.out
 #SBATCH --error=hpc/logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=CHANGE_ME@post.bgu.ac.il
+#SBATCH --mail-user=sidik@post.bgu.ac.il
 
 # --- Sizing rationale (read before changing) --------------------------------
 # --time=01:00:00: conservative for a FIRST run of unknown network speed.
