@@ -61,8 +61,9 @@ Respond with JSON only: {{"decision": "BLOCK" or "ALLOW", "confidence": 0.0-1.0,
 
 def build_classify_prompt(tool_name: str, arguments: dict[str, Any]) -> str:
     """The ONE place the classifier's LLM input string is built — training
-    (router_training/train_pilot.py) and every serving backend here must
-    call this, never re-derive the format themselves. This is the second
+    (router_training/train_common.py, used by both train_pilot.py and
+    train_full.py) and every serving backend here must call this, never
+    re-derive the format themselves. This is the second
     train/serve format bug at this exact boundary (the first was the
     decision/action JSON-key mismatch handled below in evaluate()); a
     single shared builder makes a third one structurally impossible

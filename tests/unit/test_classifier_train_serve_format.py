@@ -8,7 +8,7 @@ but absent from serving, which made the PILOT_UNREVIEWED_DATA_checkpoint
 adapter emit EOS immediately on ~every real query). The fix was to give
 both sides exactly one shared builder function rather than two copies kept
 in sync by convention. These tests exist so that if a future edit
-reintroduces a second copy (inline string-building in train_pilot.py, or
+reintroduces a second copy (inline string-building in train_common.py, or
 a backend in classifier.py that bypasses build_classify_prompt), it fails
 loudly here instead of silently shipping a checkpoint that can't talk to
 its own serving path.
@@ -16,7 +16,7 @@ its own serving path.
 from __future__ import annotations
 
 from agentwarden.policies.classifier import build_classify_prompt
-from router_training.train_pilot import to_training_pair
+from router_training.train_common import to_training_pair
 
 
 def test_training_prompt_is_byte_identical_to_serving_prompt():
@@ -43,7 +43,7 @@ def test_classify_prompt_ends_with_exactly_one_newline():
 
 
 def test_training_pair_target_follows_prompt_with_no_extra_separator():
-    # Guards the OTHER half of the format: train_pilot.py's tokenize() does
+    # Guards the OTHER half of the format: train_common.py's tokenize() does
     # `prompt + target + eos` (no inserted separator), relying on the
     # prompt itself already ending in "\n". If build_classify_prompt ever
     # stops including that trailing newline, this full/target boundary

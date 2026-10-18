@@ -52,6 +52,20 @@ scp data/router_training/sample.jsonl data/router_training/sample_manifest.json 
     <you>@slurm.bgu.ac.il:~/agentwarden-core/data/router_training/
 ```
 
+**For the full-dataset run** (`router_training/train_full.py`, 2,370
+examples — see that script's docstring for its review-status provenance),
+transfer its files the same way instead:
+
+```bash
+scp data/router_training/full_dataset.jsonl data/router_training/full_dataset_manifest.json \
+    <you>@slurm.bgu.ac.il:~/agentwarden-core/data/router_training/
+```
+
+Same non-determinism caveat as `sample.jsonl` applies to the
+paraphrase-generated portion of this file too — scp the exact file
+already recorded as reviewed in `docs/v2/RECONCILED_STATE_v0.2.md` §11b,
+don't regenerate it on the cluster.
+
 Both `train_pilot.sbatch` and `train_pilot.py` check for this file explicitly
 and exit fast with a clear error (not a silent no-op, not a crash mid-run) if
 it's missing — you'll see it immediately in `squeue`/the job's `.err` log/the
@@ -94,6 +108,25 @@ conda deactivate
 MAX_STEPS=100 sbatch hpc/train_pilot.sbatch
 ```
 
+**To run the full-dataset training instead of the pilot**, same sbatch
+file, select the module via `TRAIN_MODULE` (requires step 3's full-dataset
+scp above to have happened first):
+
+```bash
+conda deactivate
+cd ~/agentwarden-core
+TRAIN_MODULE=router_training.train_full sbatch hpc/train_pilot.sbatch
+```
+
+Leave `MAX_STEPS` unset to get `train_full.py`'s own default (3 epochs
+over the dataset's actual size — see that script's docstring for the
+exact calculation), or set it explicitly to override, same as the pilot:
+
+```bash
+conda deactivate
+TRAIN_MODULE=router_training.train_full MAX_STEPS=2000 sbatch hpc/train_pilot.sbatch
+```
+
 ### 7. Check status
 
 ```bash
@@ -110,19 +143,22 @@ tail -f hpc/logs/agentwarden-pilot-<jobid>.out
 ### 8. After it finishes
 
 Check the log for the final lines (`Training finished in ...s`, `Final adapter
-saved to ...`), then confirm the artifact landed on home storage:
+saved to ...`), then confirm the artifact landed on home storage — the exact
+directory depends on which script ran (named explicitly in that script's own
+module docstring, and echoed near the top of its banner in the log):
 
 ```bash
-ls -la ~/agentwarden-core/data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/
+ls -la ~/agentwarden-core/data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/   # pilot
+ls -la ~/agentwarden-core/data/router_training/FULL_DATASET_v1_checkpoint/         # full dataset
 ```
 
 If the job was killed (timeout, preemption, OOM) before finishing, check the
-same directory anyway — checkpoints are mirrored there every 10 steps during
-training, not only at the end (see the "Data problem" note below and the
-docstring in `router_training/train_pilot.py`), so a killed job still leaves
-something to resume from. Re-submitting (`sbatch hpc/train_pilot.sbatch`
-again) will auto-resume from the latest checkpoint it finds, whether that's
-on scratch or on the home-storage mirror.
+same directory anyway — checkpoints are mirrored there periodically during
+training (every 10 steps for the pilot, every 100 for the full-dataset run —
+see each script's `save_steps`), not only at the end, so a killed job still
+leaves something to resume from. Re-submitting the same `sbatch` command
+(same `TRAIN_MODULE`, if you set one) will auto-resume from the latest
+checkpoint it finds, whether that's on scratch or on the home-storage mirror.
 
 ---
 
