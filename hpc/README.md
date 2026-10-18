@@ -66,10 +66,13 @@ paraphrase-generated portion of this file too — scp the exact file
 already recorded as reviewed in `docs/v2/RECONCILED_STATE_v0.2.md` §11b,
 don't regenerate it on the cluster.
 
-Both `train_pilot.sbatch` and `train_pilot.py` check for this file explicitly
-and exit fast with a clear error (not a silent no-op, not a crash mid-run) if
-it's missing — you'll see it immediately in `squeue`/the job's `.err` log/the
-failure email rather than discovering it after a wasted allocation.
+Each training script (`train_pilot.py`, `train_full.py`) checks for its own
+data file explicitly and exits fast with a clear error (not a silent no-op,
+not a crash mid-run) if it's missing — you'll see it immediately in
+`squeue`/the job's log/the failure email rather than discovering it after a
+wasted allocation. The sbatch file has no `--error` directive, so stdout and
+stderr both land in the single `hpc/logs/%x-%j.out` file — check that one
+file for any failure, there's no separate `.err` to go looking for.
 
 ### 4. Create the conda environment (manager node, once)
 

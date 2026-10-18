@@ -21,6 +21,8 @@ import sys
 import time
 from pathlib import Path
 
+from transformers import TrainerCallback
+
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -54,8 +56,18 @@ def cuda_actually_works() -> bool:
         return False
 
 
-class CudaVerificationCallback:
-    """Confirms GPU use unambiguously in the log, not inferred from
+class CudaVerificationCallback(TrainerCallback):
+    """Must subclass transformers.TrainerCallback, not just duck-type the
+    methods it uses -- Trainer.__init__ calls on_init_end() (and other
+    events this class never defines, e.g. on_train_begin) unconditionally
+    on every callback via getattr, so a plain object blows up with
+    AttributeError before a single step runs. Shipped without that base
+    class once already and failed this way on a real cluster job instead
+    of locally (see tests/unit/test_train_common_callbacks.py, which
+    constructs a real Trainer with this attached specifically to catch it
+    here next time).
+
+    Confirms GPU use unambiguously in the log, not inferred from
     torch.cuda.is_available()/jobstats. jobstats reported "GPU utilization:
     0%" with 4.4GB GPU memory allocated and device=cuda logged on a 21s
     pilot run -- almost certainly a sampling artifact (jobstats polls at a
@@ -111,7 +123,7 @@ class CudaVerificationCallback:
         return control
 
 
-class CopyCheckpointToHomeCallback:
+class CopyCheckpointToHomeCallback(TrainerCallback):
     """Mirrors the latest Trainer checkpoint from scratch to home storage
     right after every save -- a hard OOM/timeout kill can't be trapped for
     a graceful copy at exit. Only instantiated when running with a scratch
