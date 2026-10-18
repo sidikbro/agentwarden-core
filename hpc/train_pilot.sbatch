@@ -5,10 +5,18 @@
 #
 #   cd ~/agentwarden-core
 #   conda deactivate
-#   sbatch hpc/train_pilot.sbatch
+#   sbatch hpc/train_pilot.sbatch                                  # pilot (64 examples)
+#   TRAIN_MODULE=router_training.train_full sbatch hpc/train_pilot.sbatch   # full dataset (2,370)
 #
-# See hpc/README.md for the full procedure, including how sample.jsonl
-# gets onto the cluster (it's gitignored — a fresh clone won't have it).
+# TRAIN_MODULE picks which script runs (default: the 64-example pilot);
+# MAX_STEPS overrides that script's own default step count either way.
+# Same sbatch file for both — the two scripts write to different,
+# honestly-named checkpoint directories (see each script's docstring), so
+# there's nothing for them to collide on.
+#
+# See hpc/README.md for the full procedure, including how the training
+# data gets onto the cluster (data/ is gitignored — a fresh clone won't
+# have it, for either script).
 
 #SBATCH --job-name=agentwarden-pilot
 #SBATCH --gpus=rtx_3090:1
@@ -16,28 +24,34 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=03:00:00
-#SBATCH --mem=24G
+#SBATCH --mem=8G
 #SBATCH --output=hpc/logs/%x-%j.out
 #SBATCH --error=hpc/logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=sidik@post.bgu.ac.il
 
 # --- Sizing rationale (read before changing) --------------------------------
-# --time=01:00:00: conservative for a FIRST run of unknown network speed.
-#   The uncertain cost is the ~3GB Qwen2.5-1.5B-Instruct download from
-#   the HF Hub on first run (cached under $HOME after that — HF's
-#   default cache dir is on home storage, which persists across jobs).
-#   Training itself (max_steps=40, LoRA, batch=1) should take well under
-#   10 minutes on an RTX 3090: the CPU-only local dev run did 40 steps
-#   at 35-75s/step with no GPU acceleration at all, so a real GPU should
-#   be at least an order of magnitude faster per step. Lower this once
-#   you've seen an actual runtime in the .out log.
-# --mem=24G: the cluster's stated default per GPU, NOT raised. This
-#   pilot's resident footprint is small — a 1.5B-param model in bf16
-#   (~3GB) plus a rank-8 LoRA adapter on 2 projection matrices (~1M
-#   params) plus a 64-example, max_length=256 dataset. Nowhere near 24G.
-#   Raise this only if a future run (bigger batch/dataset/rank) actually
-#   needs it, with the same kind of justification, not preemptively.
+# --time=03:00:00: covers both scripts with real margin. The pilot's
+#   measured GPU rate was ~0.5s/step (40 steps in a 21s training-loop
+#   window, attempt 2's jobstats). train_full.py's default of 3,555 steps
+#   (3 epochs over 2,370 examples at effective batch 2) at that same rate
+#   is ~30 minutes of actual training; add the one-time ~3GB
+#   Qwen2.5-1.5B-Instruct HF Hub download (cached under $HOME after the
+#   first run on this cluster, regardless of which script pulls it) and
+#   this still has well over an hour of slack. Lower this only with a
+#   measured runtime from an actual .out log for the specific script
+#   you're sizing it for — train_full's real per-step rate on 2,370
+#   examples hasn't been confirmed yet, only extrapolated from the pilot.
+# --mem=8G: lowered from the cluster's 24G default after attempt 1's
+#   jobstats showed actual RAM use of only 1.6GB (of the requested 24G) --
+#   this is HOST (CPU-side) memory, separate from the 4.4GB GPU memory the
+#   same job used, which --gpus=rtx_3090:1 governs on its own and is not
+#   affected by this setting. 8G keeps a real margin over the measured
+#   1.6GB (dataloader workers, HF Hub download buffering on a cold cache,
+#   etc.) without holding 24G of a shared resource idle for a job that
+#   doesn't need it. Raise this again, with the same kind of measured
+#   justification, only if a future run (bigger batch/dataset/rank)
+#   actually needs more.
 # --gpus=rtx_3090:1 / no --partition: if this job stays PENDING in
 #   `squeue --me` for longer than expected, check `sinfo -o "%P %G"` for
 #   the GPU partition's name and add `#SBATCH --partition=<name>` —
@@ -55,17 +69,20 @@ source activate agentwarden-pilot
 
 cd "$SLURM_SUBMIT_DIR"
 
-if [ ! -f data/router_training/sample.jsonl ]; then
-    echo "FATAL: data/router_training/sample.jsonl is missing." >&2
-    echo "This is expected on a fresh clone (data/ is gitignored)." >&2
-    echo "See hpc/README.md 'Transfer training data' — scp it from your dev machine first." >&2
-    exit 1
+TRAIN_MODULE="${TRAIN_MODULE:-router_training.train_pilot}"
+
+# No sbatch-level data-file check here (it used to hardcode a check for
+# sample.jsonl specifically, which would have been WRONG for
+# train_full.py's full_dataset.jsonl) -- both scripts already do this
+# check themselves with a specific, actionable error naming the exact
+# missing file, so this just runs the module and lets it report that.
+if [ -n "${MAX_STEPS:-}" ]; then
+    echo "Running ${TRAIN_MODULE} with max_steps=${MAX_STEPS}"
+    python3 -m "$TRAIN_MODULE" "$MAX_STEPS"
+else
+    echo "Running ${TRAIN_MODULE} with its own default step count"
+    python3 -m "$TRAIN_MODULE"
 fi
 
-MAX_STEPS="${MAX_STEPS:-40}"
-echo "Running train_pilot.py with max_steps=${MAX_STEPS}"
-
-python3 -m router_training.train_pilot "$MAX_STEPS"
-
 echo "Job finished at $(date)"
-echo "Final adapter: data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/ (on home storage)"
+echo "Final adapter directory is named in ${TRAIN_MODULE}'s own module docstring (on home storage)."
