@@ -150,7 +150,24 @@ class CopyCheckpointToHomeCallback(TrainerCallback):
         return control
 
 
+# Held-out diagnostic files that must never be trained on -- matched by
+# filename prefix, not by a one-off check in a single script, so this
+# holds regardless of which training entrypoint eventually passes a
+# data_path here. See docs/v2/minimal_pair_probe_spec.md: the probe is
+# only valid as a diagnostic if no checkpoint it evaluates has ever seen
+# it during training.
+_HELD_OUT_PREFIXES = ("HELD_OUT_",)
+
+
 def load_examples(path: Path) -> list[dict]:
+    if path.name.startswith(_HELD_OUT_PREFIXES):
+        raise ValueError(
+            f"{path.name} is a held-out diagnostic file (prefix {_HELD_OUT_PREFIXES!r}) "
+            "and must never be used as training data -- see "
+            "docs/v2/minimal_pair_probe_spec.md. If you're trying to score it, "
+            "use scripts/minimal_pair_leakage_check.py or the canary-check "
+            "tooling, not run_training()."
+        )
     examples = []
     with path.open() as f:
         for line in f:

@@ -114,6 +114,48 @@ are neither: `chmod`, `chown`, `cron`, `delegate`, `edit`, `kill`,
 `process`, `sessions_send`, `sessions_spawn`, `sessions_yield`,
 `subagent`, `subagents`, `task`, `web_fetch`, `write`, `write_file`.
 
+## Stage 1 result (2026-10-19): leakage detected, stopped per protocol
+
+16 pairs (32 rows) were hand-authored to this spec and written to
+`data/router_training/HELD_OUT_minimal_pair_probe.jsonl` — one pair per
+eligible tool from requirement (d)'s 16-tool list. `router_training/
+train_common.py::load_examples()` now rejects any path whose filename
+starts with `HELD_OUT_`, so this file cannot reach `run_training()`
+through any current or future training entrypoint that funnels through
+it. `scripts/minimal_pair_leakage_check.py` implements requirements (a)
+and (c):
+
+- **Token-skew scan (a):** no unigram or bigram appearing at least twice
+  across the set is skewed ≥0.8 between ALLOW and BLOCK contexts. No
+  single stock phrase (the failure mode (a) specifically names) is
+  present.
+- **Context-only baseline (c):** TF-IDF + logistic regression, given
+  only the `context` string (no `tool_name`/`arguments`), scored with
+  leave-one-**pair**-out cross-validation (leave-one-*row*-out was tried
+  first and rejected: it leaves a row's exact topical twin — its own
+  pair partner, carrying the opposite label — in the training set on
+  every fold, which pulls a topic-sensitive model toward the wrong
+  label for a reason that has nothing to do with real leakage; see the
+  script's docstring). Result: **22/32 = 68.8%** (one-sided binomial
+  p=0.025 against chance; 90% CI 53%-82%). Errors split roughly evenly
+  (5 ALLOW items misread as BLOCK, 5 BLOCK items misread as ALLOW) — not
+  a degenerate "always predict BLOCK" baseline, and consistent with the
+  token-skew scan finding no single dominant tell: whatever the leak
+  is, it's diffuse across several pairs' phrasing rather than one
+  repeated keyword.
+
+**This is statistically meaningfully above chance.** Per the stage-1
+protocol: stopping here. Stage 2 (scoring the probe against
+`PILOT_UNREVIEWED_DATA_checkpoint` and `PILOT_CEILING_WITH_CONTEXT_checkpoint`)
+was not run. This item set is not yet valid evidence about context-use
+and should not be read as such until it's revised and re-checked. The
+31-item canary set's own template-shortcut probe
+(`scripts/template_shortcut_probe.py`) found no single-token leak either
+in that case — the pattern here (clean token scan, leaky classifier) is
+a reminder that a token-presence check alone is not sufficient to clear
+a set; the held-out baseline classifier is doing real work the
+token-skew scan can't substitute for.
+
 ## What this document does not do
 
 It does not write any of the 30-50 items, does not pick which of the 16
