@@ -66,10 +66,13 @@ paraphrase-generated portion of this file too — scp the exact file
 already recorded as reviewed in `docs/v2/RECONCILED_STATE_v0.2.md` §11b,
 don't regenerate it on the cluster.
 
-Both `train_pilot.sbatch` and `train_pilot.py` check for this file explicitly
-and exit fast with a clear error (not a silent no-op, not a crash mid-run) if
-it's missing — you'll see it immediately in `squeue`/the job's `.err` log/the
-failure email rather than discovering it after a wasted allocation.
+Each training script (`train_pilot.py`, `train_full.py`) checks for its own
+data file explicitly and exits fast with a clear error (not a silent no-op,
+not a crash mid-run) if it's missing — you'll see it immediately in
+`squeue`/the job's log/the failure email rather than discovering it after a
+wasted allocation. The sbatch file has no `--error` directive, so stdout and
+stderr both land in the single `hpc/logs/%x-%j.out` file — check that one
+file for any failure, there's no separate `.err` to go looking for.
 
 ### 4. Create the conda environment (manager node, once)
 
@@ -127,6 +130,27 @@ conda deactivate
 TRAIN_MODULE=router_training.train_full MAX_STEPS=2000 sbatch hpc/train_pilot.sbatch
 ```
 
+**To run the gate-3a ceiling experiment** (same 64-example pilot data as
+the default, but with `include_context=True` — see
+`router_training/train_pilot_ceiling.py`'s module docstring and
+`docs/v2/provenance_representation.md` before reading anything into its
+result beyond whether gate 3a moves at all when the model can see
+`context`; it is explicitly **not** a candidate serving configuration).
+No separate data transfer needed — it reuses the same `sample.jsonl`
+already on the cluster from step 3:
+
+```bash
+conda deactivate
+cd ~/agentwarden-core
+TRAIN_MODULE=router_training.train_pilot_ceiling sbatch hpc/train_pilot.sbatch
+```
+
+This was attempted locally first and abandoned after ~49 minutes without
+completing a single step — this is a shared desktop, and the same kind
+of host-memory contention that killed the original local pilot attempt
+(§11b, attempt 1) was thrashing it via swap. Submit it to the cluster
+like the other two, not locally.
+
 ### 7. Check status
 
 ```bash
@@ -148,8 +172,9 @@ directory depends on which script ran (named explicitly in that script's own
 module docstring, and echoed near the top of its banner in the log):
 
 ```bash
-ls -la ~/agentwarden-core/data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/   # pilot
-ls -la ~/agentwarden-core/data/router_training/FULL_DATASET_v1_checkpoint/         # full dataset
+ls -la ~/agentwarden-core/data/router_training/PILOT_UNREVIEWED_DATA_checkpoint/        # pilot
+ls -la ~/agentwarden-core/data/router_training/FULL_DATASET_v1_checkpoint/              # full dataset
+ls -la ~/agentwarden-core/data/router_training/PILOT_CEILING_WITH_CONTEXT_checkpoint/   # ceiling experiment
 ```
 
 If the job was killed (timeout, preemption, OOM) before finishing, check the

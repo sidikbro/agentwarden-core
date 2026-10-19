@@ -7,12 +7,16 @@
 #   conda deactivate
 #   sbatch hpc/train_pilot.sbatch                                  # pilot (64 examples)
 #   TRAIN_MODULE=router_training.train_full sbatch hpc/train_pilot.sbatch   # full dataset (2,370)
+#   TRAIN_MODULE=router_training.train_pilot_ceiling sbatch hpc/train_pilot.sbatch  # gate-3a ceiling experiment (64 examples + context)
 #
 # TRAIN_MODULE picks which script runs (default: the 64-example pilot);
 # MAX_STEPS overrides that script's own default step count either way.
-# Same sbatch file for both — the two scripts write to different,
-# honestly-named checkpoint directories (see each script's docstring), so
-# there's nothing for them to collide on.
+# Same sbatch file for all three — each script writes to its own,
+# honestly-named checkpoint directory (see each script's docstring), so
+# there's nothing for them to collide on. train_pilot_ceiling is NOT a
+# candidate serving configuration -- see its module docstring and
+# docs/v2/provenance_representation.md before reading anything into its
+# result beyond "does gate 3a move if the model can see context at all."
 #
 # See hpc/README.md for the full procedure, including how the training
 # data gets onto the cluster (data/ is gitignored — a fresh clone won't
@@ -24,9 +28,14 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=03:00:00
-#SBATCH --mem=8G
+#SBATCH --mem=24G
+# --output only, no --error: Slurm then merges stderr into the same file
+# as stdout. A real failure (see the --mem note below) put its traceback
+# in .err while both of us kept reading .out looking for it -- merging the
+# streams means the next failure's traceback is wherever we're already
+# looking, not in a second file nobody checks until someone says "did you
+# look at .err?"
 #SBATCH --output=hpc/logs/%x-%j.out
-#SBATCH --error=hpc/logs/%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=sidik@post.bgu.ac.il
 
@@ -42,16 +51,15 @@
 #   measured runtime from an actual .out log for the specific script
 #   you're sizing it for — train_full's real per-step rate on 2,370
 #   examples hasn't been confirmed yet, only extrapolated from the pilot.
-# --mem=8G: lowered from the cluster's 24G default after attempt 1's
-#   jobstats showed actual RAM use of only 1.6GB (of the requested 24G) --
-#   this is HOST (CPU-side) memory, separate from the 4.4GB GPU memory the
-#   same job used, which --gpus=rtx_3090:1 governs on its own and is not
-#   affected by this setting. 8G keeps a real margin over the measured
-#   1.6GB (dataloader workers, HF Hub download buffering on a cold cache,
-#   etc.) without holding 24G of a shared resource idle for a job that
-#   doesn't need it. Raise this again, with the same kind of measured
-#   justification, only if a future run (bigger batch/dataset/rank)
-#   actually needs more.
+# --mem=24G: left at the cluster default. This was lowered to 8G once,
+#   on the strength of a 21-SECOND smoke-test run's jobstats (1.6GB host
+#   RAM used) -- too short a window to be representative, and it was
+#   wrongly blamed for a later crash that was actually an unrelated bug
+#   (a callback missing its TrainerCallback base class, fixed in
+#   router_training/train_common.py). Don't right-size this from a smoke
+#   test again: only lower it on the strength of a full, representative
+#   run's jobstats (a real multi-hundred-step training run, not a
+#   21-second one), and say which run's numbers justified the new value.
 # --gpus=rtx_3090:1 / no --partition: if this job stays PENDING in
 #   `squeue --me` for longer than expected, check `sinfo -o "%P %G"` for
 #   the GPU partition's name and add `#SBATCH --partition=<name>` —
