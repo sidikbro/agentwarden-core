@@ -158,8 +158,14 @@ def load_examples(path: Path) -> list[dict]:
     return examples
 
 
-def to_training_pair(ex: dict) -> tuple[str, str]:
-    prompt = build_classify_prompt(ex["tool_name"], ex["arguments"])
+def to_training_pair(ex: dict, include_context: bool = False) -> tuple[str, str]:
+    """include_context=True is the gate-3a ceiling experiment only (see
+    train_pilot_ceiling.py and docs/v2/provenance_representation.md) --
+    defaults False so every other caller is unaffected."""
+    prompt = build_classify_prompt(
+        ex["tool_name"], ex["arguments"],
+        context=ex.get("context", ""), include_context=include_context,
+    )
     target = json.dumps({
         "decision": ex["decision"],
         "confidence": 0.9,
@@ -178,10 +184,16 @@ def run_training(
     logging_steps: int,
     banner_fn,
     missing_data_hint: str,
+    include_context: bool = False,
 ) -> None:
     """Shared main(): load data, build the LoRA model, train, checkpoint,
     save. Everything caller-specific (which file, where the final adapter
-    goes, how often to checkpoint, what the banner says) is passed in."""
+    goes, how often to checkpoint, what the banner says) is passed in.
+
+    include_context=True is the gate-3a ceiling experiment only -- see
+    train_pilot_ceiling.py and docs/v2/provenance_representation.md.
+    Defaults False, matching to_training_pair()'s default, so every
+    existing caller is unaffected."""
     if not data_path.exists():
         print(f"FATAL: no training data at {data_path}", file=sys.stderr)
         print("This is expected on a fresh clone -- data/ is gitignored.", file=sys.stderr)
@@ -203,7 +215,7 @@ def run_training(
     approved = sum(1 for e in examples if e.get("review_status") == "approved")
     print(f"Loaded {len(examples)} examples ({approved} review_status=approved, {pending} pending)")
 
-    pairs = [to_training_pair(e) for e in examples]
+    pairs = [to_training_pair(e, include_context=include_context) for e in examples]
 
     print(f"Loading base model {BASE_MODEL} (first run downloads it -- may take a while)...")
     t0 = time.time()

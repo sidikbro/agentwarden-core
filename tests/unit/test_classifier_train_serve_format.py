@@ -58,3 +58,43 @@ def test_training_pair_target_follows_prompt_with_no_extra_separator():
     full = prompt + target
     assert full.endswith('"test reason"}')
     assert "\n{" in full  # the single "\n" boundary between prompt and target JSON
+
+
+def test_default_prompt_excludes_context_even_when_example_has_one():
+    # The gate-3a ceiling experiment (docs/v2/provenance_representation.md)
+    # added an opt-in `include_context` path to build_classify_prompt/
+    # to_training_pair. This pins down that the DEFAULT path -- every
+    # serving backend, and every checkpoint except
+    # PILOT_CEILING_WITH_CONTEXT_checkpoint -- stays exactly as before,
+    # even when the example/request carries a `context` value, so that
+    # opt-in path can never silently become the default.
+    example = {
+        "tool_name": "read",
+        "arguments": {"path": "README.md"},
+        "context": "this must not appear in the default prompt",
+        "decision": "ALLOW",
+        "reason": "test reason",
+    }
+    prompt, _ = to_training_pair(example)
+    serve_prompt = build_classify_prompt("read", {"path": "README.md"})
+    assert prompt == serve_prompt
+    assert "this must not appear in the default prompt" not in prompt
+
+
+def test_include_context_true_inserts_a_context_line():
+    prompt_with_ctx, _ = to_training_pair(
+        {
+            "tool_name": "read",
+            "arguments": {"path": "README.md"},
+            "context": "a prior step already verified this",
+            "decision": "ALLOW",
+            "reason": "test reason",
+        },
+        include_context=True,
+    )
+    assert "Context: a prior step already verified this\n" in prompt_with_ctx
+    serve_prompt_with_ctx = build_classify_prompt(
+        "read", {"path": "README.md"},
+        context="a prior step already verified this", include_context=True,
+    )
+    assert prompt_with_ctx == serve_prompt_with_ctx

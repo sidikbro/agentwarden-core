@@ -7,12 +7,16 @@
 #   conda deactivate
 #   sbatch hpc/train_pilot.sbatch                                  # pilot (64 examples)
 #   TRAIN_MODULE=router_training.train_full sbatch hpc/train_pilot.sbatch   # full dataset (2,370)
+#   TRAIN_MODULE=router_training.train_pilot_ceiling sbatch hpc/train_pilot.sbatch  # gate-3a ceiling experiment (64 examples + context)
 #
 # TRAIN_MODULE picks which script runs (default: the 64-example pilot);
 # MAX_STEPS overrides that script's own default step count either way.
-# Same sbatch file for both — the two scripts write to different,
-# honestly-named checkpoint directories (see each script's docstring), so
-# there's nothing for them to collide on.
+# Same sbatch file for all three — each script writes to its own,
+# honestly-named checkpoint directory (see each script's docstring), so
+# there's nothing for them to collide on. train_pilot_ceiling is NOT a
+# candidate serving configuration -- see its module docstring and
+# docs/v2/provenance_representation.md before reading anything into its
+# result beyond "does gate 3a move if the model can see context at all."
 #
 # See hpc/README.md for the full procedure, including how the training
 # data gets onto the cluster (data/ is gitignored — a fresh clone won't
