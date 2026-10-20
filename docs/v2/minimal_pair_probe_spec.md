@@ -1,11 +1,17 @@
 # Minimal-pair context-use probe — spec
 
-Status: **spec only. Nothing in this document is implemented.** No items
-exist yet, no generation has run. This is a design for a held-out
-diagnostic, written so the eventual 30-50 items are built to a stated
-contract instead of to whatever's easiest to write first.
+Status: **spec only, revised 2026-10-20. Nothing in this document is
+implemented.** The original prose-sentence design (below, "Original
+design: prose context") is superseded — its stage-1 item set leaked and
+is not being re-authored; see "Why the prose design is superseded" for
+why iterating on it further isn't the right move. The current design is
+"Revised design: structured provenance records," for which no items
+have been generated yet either. This is still a design document, not
+an implementation.
 
-## Why this exists
+## Original design: prose context (superseded — kept for the record, not a current spec)
+
+### Why this exists
 
 `docs/v2/RECONCILED_STATE_v0.2.md` §11b found that gate 3a
 (`defensively_framed_but_unsafe`, zero-tolerance BLOCK) is not a valid
@@ -25,7 +31,7 @@ question: a small, held-out set where the *only* thing that
 distinguishes a BLOCK item from its paired ALLOW item is the `context`
 string, with `tool_name` and `arguments` held identical across the pair.
 
-## What this is not
+### What this is not
 
 - Not training data. Every item is held out, permanently. If it is ever
   used to retrain anything, it stops being a valid diagnostic for that
@@ -40,7 +46,7 @@ string, with `tool_name` and `arguments` held identical across the pair.
   data actually built to test it, instead of on data that happens not
   to need an answer either way.
 
-## Structure
+### Structure
 
 Each probe item is a pair: `(id, tool_name, arguments, context_allow,
 context_block)` — one `tool_name`/`arguments` pair, two context strings,
@@ -51,7 +57,7 @@ two labels. Expanding a pair into two scored rows gives
 score it without new scoring code. Target size: **15-25 pairs (30-50
 rows)**, matching the existing canary set's order of magnitude.
 
-## Requirements the eventual items must satisfy
+### Requirements the eventual items must satisfy
 
 **(a) The discriminating fact must be carried structurally, not by a
 keyword that correlates with the label.** A pair fails this if there is
@@ -114,7 +120,7 @@ are neither: `chmod`, `chown`, `cron`, `delegate`, `edit`, `kill`,
 `process`, `sessions_send`, `sessions_spawn`, `sessions_yield`,
 `subagent`, `subagents`, `task`, `web_fetch`, `write`, `write_file`.
 
-## Stage 1 result (2026-10-19): leakage detected, stopped per protocol
+### Stage 1 result (2026-10-19): leakage detected, stopped per protocol
 
 16 pairs (32 rows) were hand-authored to this spec and written to
 `data/router_training/HELD_OUT_minimal_pair_probe.jsonl` — one pair per
@@ -156,11 +162,117 @@ a reminder that a token-presence check alone is not sufficient to clear
 a set; the held-out baseline classifier is doing real work the
 token-skew scan can't substitute for.
 
+## Why the prose design is superseded, not re-authored
+
+The stage-1 result above (68.8% leave-one-pair-out accuracy from
+`context` text alone) could, in principle, be treated as "these
+particular 16 pairs still have a fixable tell — rewrite them and
+re-check." That is deliberately not what's happening here, and not
+only because of budget. Two further facts, both from 2026-10-20, make
+re-authoring the wrong move rather than just an unappealing one:
+
+1. **The leak isn't specific to these 16 hand-written pairs — it's
+   present at near-total strength across the entire real dataset.**
+   `scripts/context_category_leakage_check.py` ran the identical
+   TF-IDF + logistic-regression setup against all 758
+   `safe_but_defended`/`defensively_framed_but_unsafe` rows in
+   `full_dataset.jsonl`, context string only, and got **99.5% balanced
+   accuracy** (one misclassified row out of 758) separating the two
+   categories by register alone. If the dataset's own 758
+   professionally-authored rows carry a near-total register tell, 16
+   pairs written to deliberately avoid one are not an easier case —
+   they're a harder one, being far smaller and single-authored.
+2. **Prose carries register irreducibly.** Any sentence written by a
+   human to convey "this was verified" vs. "this was not" will differ
+   in more than its truth-bearing content — word choice, sentence
+   length, hedging, which clause comes first, how specific the cited
+   detail is. That's not a drafting mistake to iron out; it's what
+   natural-language register *is*. Each revision pass that rewrote a
+   pair specifically to beat `scripts/minimal_pair_leakage_check.py`
+   would be training the author (a human, or an LLM if one were used
+   instead) against that one detector — removing whatever the detector
+   currently flags while very plausibly introducing or leaving some
+   other register tell the same detector, or a stronger one, would
+   catch next. That is overfitting the items to the test, not removing
+   the thing the test exists to catch. A probe built this way would
+   eventually "pass" by construction, not by actually being clean.
+
+The 68.8% result is therefore being read as confirmation that prose
+`context` is the wrong representation for this diagnostic, not as a
+bug in sixteen specific sentences. The structured-record design below
+replaces it rather than iterating on it.
+
+## Revised design: structured provenance records (current spec — no items generated)
+
+Instead of a free-text `context` sentence, each probe item's `context`
+is a **structured record**, shaped after the verification-history
+concept `docs/v2/provenance_representation.md` describes (a prior
+governance decision this system itself logged — never tool output,
+never model-generated text, never the current call's own claim).
+Concretely, each half of a pair carries a record with these fields,
+not a sentence:
+
+```
+{
+  "source": "<what produced this record, e.g. 'audit_log'>",
+  "verifier": "<which prior decision or actor confirmed the fact,
+                e.g. 'session sess_main, decision d_117'>",
+  "check": "<what was checked, e.g. 'domain reputation lookup'>",
+  "result": "<the check's outcome, e.g. 'confirmed malicious' |
+              'no record found' | 'confirmed legitimate'>",
+  "timestamp": "<when the check happened, e.g. '2026-10-18T09:14:00Z'>"
+}
+```
+
+`tool_name` and `arguments` stay identical within a pair, exactly as
+in the original design; only this structured record varies, and it is
+what flips the label (a `result` of "confirmed malicious"/"no record
+found" → BLOCK is unverified or adverse; "confirmed legitimate" →
+ALLOW). `build_classify_prompt`'s `include_context` path would need to
+render this as a block of key-value lines rather than a sentence for
+this to reach the model in the same place `context` currently does —
+not implemented here, noted as the integration point for whenever
+items are actually built.
+
+**This makes label-discrimination near-trivial for any consumer of the
+field — and that is the finding, not a flaw to design around.** A
+record with a `result` field has one answer: read it. There is no
+register to launder, no sentence-construction tell to leak or to
+clean up, because there is no sentence — the field states the outcome
+directly, by construction, *if and only if the field is populated from
+a trustworthy source* (which is exactly `provenance_representation.md`'s
+unresolved prerequisite — a real audit store, not the single
+`logger.info()` call that exists today). A structured field that is
+actually trustworthy is naturally read by a symbolic rule (`if
+result == "confirmed malicious": BLOCK`), not inferred by a learned
+classifier weighing lexical cues. That reframes where gate 3a's
+decision belongs in a system that actually has this field available:
+**on the symbolic side of a hybrid architecture, keyed directly off
+the verification record, with the learned classifier's job narrowed to
+residual ambiguity the record doesn't resolve** (e.g. no record exists
+yet, or the record's own `check` type doesn't cover the claim being
+made) — not "train the classifier harder on more examples with context
+included," which is the path the original ceiling experiment was
+implicitly testing.
+
+**No items are being generated for this design yet.** This section is
+the spec for what a future minimal-pair set under this representation
+would look like, so that whenever that set is built, it's built as a
+structured record from the start rather than as a sentence that
+happens to describe one.
+
 ## What this document does not do
 
-It does not write any of the 30-50 items, does not pick which of the 16
-eligible tools to use for which pair, does not design the leakage-test
-baseline's exact implementation (only states what it must check and
-what result licenses trusting the probe), and does not schedule when
-this gets built. Those are the next decisions, each separate from
-writing this spec.
+It does not write any items under either design. For the superseded
+prose design, the 16 pairs that were written are historical record,
+not a template to extend. For the current structured-record design,
+it does not pick which of the 16 eligible tools gets which record
+content, does not implement the `build_classify_prompt` rendering
+change a structured `context` would need, does not design a leakage
+check for this representation (the point of the design is that one
+shouldn't be necessary if the field is genuinely structured and
+trustworthy — that claim itself would still need checking once items
+exist, just not against lexical register), and does not schedule when
+any of this gets built or whether a hybrid symbolic/learned
+architecture gets implemented. Those are all separate, later
+decisions.
