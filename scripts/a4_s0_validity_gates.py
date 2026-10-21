@@ -46,6 +46,33 @@ the historical record rather than overwritten. See
 `build_agentdojo_matched_s0_pairs` for exactly how each benchmark's
 matched set is constructed and how much of it had no match at all.
 
+Also runs an ABLATED re-run of gate 1 alone (docs/v2/A4_MULTITURN_SPEC_v0.2.md
+§9 gate 1, still blocking; requested after gate 1's original unmatched
+FAIL on both benchmarks). Arm 0's two shortcut features -- the call's
+tool name and its position in the sequence -- are scrubbed from the full
+S0 JSON (`_ablate_shortcut_features()`) before gate 1's signals are
+re-run on it, so the result isolates whether the anchor + call_counts +
+invocations_observed + call-arguments portion leaks independently of the
+shortcut gate 3 already found. Position is scrubbed by construction
+rather than by any correlation found in the data: every BENIGN/ATTACK
+pair shares the identical `invocations_observed`/`call_counts` value
+(same prefix, §13 step 3's own pairing rule), so that portion already
+carries zero mutual information with the label before any ablation --
+the scrub is applied anyway, to make the ablation literal and
+inspectable rather than argued from the pairing's symmetry. Tool name is
+the real intervention: it is replaced with a constant placeholder,
+leaving the call's arguments untouched.
+
+A second, stricter decomposition is also run alongside it
+(`_exclude_call_entirely()` / SESSION_STATE_ONLY): anchor + call_counts +
+invocations_observed with the `call` key dropped entirely, not just its
+tool name. This separates three distinct possible leak sources that the
+tool/position ablation alone cannot distinguish between: (a) tool
+identity/position (arm 0's shortcut), (b) the call's own argument
+content, independent of which tool it is, and (c) the anchor/
+call_counts/invocations_observed fields leaking on their own. Run both,
+not one in place of the other -- they answer different questions.
+
 Usage:
     python3 -m scripts.a4_s0_validity_gates --stac-data /path/to/STAC_benchmark_data.json
     python3 -m scripts.a4_s0_validity_gates --stac-data ... --json-out results.json
@@ -106,6 +133,42 @@ def _gate3_rows(pairs: list[S0Pair]) -> dict[str, list[dict[str, Any]]]:
         rows["BENIGN"].append({"text": call_only_json(pair.benign_call), "case_id": pair.case_id})
         rows["ATTACK"].append({"text": call_only_json(pair.attack_call), "case_id": pair.case_id})
     return rows
+
+
+def _ablate_shortcut_features(s0_json: str) -> str:
+    """Scrub arm-0's two shortcut features (docs/v2/A4_MULTITURN_SPEC_v0.2.md
+    §8 arm 0: "the call's tool name and its position in the sequence")
+    from a full S0 JSON string. Everything else -- the anchor,
+    `call_counts`, and the call's own arguments -- is left byte-identical.
+    See module docstring for why `invocations_observed` is ablated despite
+    already being mathematically balanced between BENIGN and ATTACK within
+    every pair."""
+    payload = json.loads(s0_json)
+    payload["call"] = {**payload["call"], "tool_name": "<ABLATED_TOOL_NAME>"}
+    payload["invocations_observed"] = 0
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+
+def _gate1_ablated_rows(pairs: list[S0Pair]) -> dict[str, list[dict[str, Any]]]:
+    return _rows_by_label(pairs, lambda pair, s0_json: _ablate_shortcut_features(s0_json))
+
+
+def _exclude_call_entirely(s0_json: str) -> str:
+    """anchor + call_counts + invocations_observed only, no `call` key at
+    all -- the literal "does the anchor + session-state portion leak
+    independently of the call" question, run alongside the tool/position
+    ablation above rather than in its place, since the two questions are
+    different and conflating them would hide which of three sources --
+    tool identity/position, the call's argument content, or the anchor/
+    call_counts/invocations_observed fields themselves -- is actually
+    responsible for any residual leak."""
+    payload = json.loads(s0_json)
+    del payload["call"]
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+
+def _gate1_session_state_only_rows(pairs: list[S0Pair]) -> dict[str, list[dict[str, Any]]]:
+    return _rows_by_label(pairs, lambda pair, s0_json: _exclude_call_entirely(s0_json))
 
 
 def run_gate123(name: str, pairs: list[S0Pair], builder) -> dict[str, Any]:
@@ -205,6 +268,20 @@ def run_matched_gate3(benchmark: str, pairs: list[S0Pair], counts: dict[str, int
     return result
 
 
+def run_gate1_ablated(benchmark: str, pairs: list[S0Pair]) -> dict[str, Any]:
+    print(f"=== {benchmark}: ABLATED gate 1 re-run -- shortcut features (tool identity, position) scrubbed ===\n")
+    result = run_gate123("1_serialized_input_leakage_ABLATED", pairs, _gate1_ablated_rows)
+    print_gate123(result, benchmark)
+    return result
+
+
+def run_gate1_session_state_only(benchmark: str, pairs: list[S0Pair]) -> dict[str, Any]:
+    print(f"=== {benchmark}: gate 1, SESSION-STATE-ONLY (call excluded entirely) ===\n")
+    result = run_gate123("1_serialized_input_leakage_SESSION_STATE_ONLY", pairs, _gate1_session_state_only_rows)
+    print_gate123(result, benchmark)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stac-data", type=Path, required=True, help="path to STAC_benchmark_data.json")
@@ -231,6 +308,16 @@ def main() -> None:
         "agentdojo": run_matched_gate3("AgentDojo (secondary, coarse anchor)", agentdojo_matched_pairs, agentdojo_matched_counts),
     }
 
+    ablated_results = {
+        "stac": run_gate1_ablated("STAC (primary)", stac_pairs),
+        "agentdojo": run_gate1_ablated("AgentDojo (secondary, coarse anchor)", agentdojo_pairs),
+    }
+
+    session_state_only_results = {
+        "stac": run_gate1_session_state_only("STAC (primary)", stac_pairs),
+        "agentdojo": run_gate1_session_state_only("AgentDojo (secondary, coarse anchor)", agentdojo_pairs),
+    }
+
     print("=== SUMMARY (unmatched, kept as record) ===")
     for benchmark, results in all_results.items():
         for r in results:
@@ -242,7 +329,19 @@ def main() -> None:
         verdict = r["verdict"] if not r.get("skipped") else f"SKIPPED ({r.get('reason')})"
         print(f"{benchmark:10s} {r['gate']:30s} {verdict}")
 
+    print("\n=== SUMMARY (ablated gate 1 re-run -- tool identity + position scrubbed) ===")
+    for benchmark, r in ablated_results.items():
+        verdict = r["verdict"] if not r.get("skipped") else f"SKIPPED ({r.get('reason')})"
+        print(f"{benchmark:10s} {r['gate']:30s} {verdict}")
+
+    print("\n=== SUMMARY (gate 1, session-state-only -- call excluded entirely) ===")
+    for benchmark, r in session_state_only_results.items():
+        verdict = r["verdict"] if not r.get("skipped") else f"SKIPPED ({r.get('reason')})"
+        print(f"{benchmark:10s} {r['gate']:30s} {verdict}")
+
     all_results["matched_gate3"] = matched_results
+    all_results["ablated_gate1"] = ablated_results
+    all_results["session_state_only_gate1"] = session_state_only_results
 
     if args.json_out:
         args.json_out.write_text(json.dumps(all_results, indent=2))
