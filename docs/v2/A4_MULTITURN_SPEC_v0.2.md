@@ -93,13 +93,17 @@ The tiering is itself a result. "Which state does black-box governance actually 
 
 | Benchmark | Role |
 |---|---|
-| **STAC** ([2509.25624](https://arxiv.org/html/2509.25624v2)) | Primary. Sequential chains, only the final call malicious; 483 cases, 1,352 interaction sets |
-| **MT-AgentRisk** (via [2610.00400](https://arxiv.org/html/2610.00400)) | Primary. The set on which rule-based monitors never fire — the hardest available case for a symbolic baseline |
-| **AgentDojo** | Mandatory for comparable utility-cost numbers; every competitor reports it |
+| **STAC** ([2509.25624](https://arxiv.org/html/2509.25624v2)) | **Primary, for both the black-box and white-box arms.** Sequential chains, only the final call malicious; 483 cases, 1,352 interaction sets. Its trajectories are static and pre-recorded (confirmed directly against `data/STAC_benchmark_data.json` when the adapter was built) — unlike MT-AgentRisk, this supports activation replay (arm 4, §8) with no live execution required, which is the reason STAC, not MT-AgentRisk, now carries both arms |
+| **MT-AgentRisk** (via [2610.00400](https://arxiv.org/html/2610.00400)) | **Secondary, gated on dataset access.** `CHATS-Lab/MT-AgentRisk` on HuggingFace requires a terms-of-use form (name/affiliation/email) that was not completed in this session — see `benchmark/a4/mt_agentrisk_adapter.py::MTAgentRiskDatasetNotAvailableError`. Its live-execution design (an OpenHands-controlled agent against sandboxed MCP servers) means the adapter can only emit the staged task instructions, never a recorded trajectory — there is no `interaction_history` equivalent to replay activations against, so it cannot carry arm 4 the way STAC now does |
+| **AgentDojo** | Mandatory for comparable utility-cost numbers; every competitor reports it. Pooled into the A4 arms comparison under the coarse-anchor requirement below |
 | **Cross-Session Threats** ([2604.21131](https://arxiv.org/html/2604.21131v1)) | Secondary, if the anchor's session-lifetime property is to be tested |
 | Hand-authored pairs | **Suspended.** Revisit only if the benchmarks prove unable to express a needed condition |
 
 Anchors are not supplied by these benchmarks and must be derived. The derivation procedure must be mechanical and stated — e.g. the benchmark's declared task becomes `authorized_task`, with `scope`/`allowed_effects` inferred by a fixed rule — and must not be hand-tuned per case, which would smuggle the label into the anchor.
+
+**Citation vs. reproduction.** "Rule-based monitors never fire on decomposition attacks" (ASR 0.80–1.00) is 2610.00400's own result, against their own decomposition set, under their own monitor. It is cited here, not reproduced — we do not have that set (see MT-AgentRisk's row above). Arm 1 (§8) instead establishes **our own** per-step floor, measured directly on STAC, and that number must be reported as what it is: AgentWarden's per-step classifier against STAC's chains, not a reproduction of 2610.00400's figure against MT-AgentRisk's. The two are not interchangeable and must not be conflated in any write-up.
+
+**AgentDojo coarse-anchor requirement.** AgentDojo's adapter (`benchmark/a4/agentdojo_adapter.py`) derives `allowed_effects` from each task's `ground_truth` call sequence — informative, unlike STAC's and MT-AgentRisk's deliberately uninformative `ALL_EFFECTS` (`benchmark/a4/common.py`), because AgentDojo is the one benchmark where that derivation isn't confounded by the benchmark's own construction (§8's arm-4 discussion; see `agentdojo_adapter.py`'s docstring). When AgentDojo cases are pooled into the A4 arms comparison (§8, §10), this anchor **must be coarsened to `ALL_EFFECTS`** before pooling, so every benchmark's anchor carries the same informativeness going into the comparison — otherwise a pooled result could differ because AgentDojo's anchor told the arms more, not because the arms themselves differ, which would be a confound masquerading as a finding. The informative, ground-truth-derived anchor is kept for AgentDojo's own standalone utility/cost role (§13 step 2, independent of A4); only the copy pooled into A4's arms comparison is coarsened.
 
 ---
 
@@ -136,6 +140,7 @@ A gate failure stops the line and is recorded as a result.
 - **Per-arm overhead**, wall-clock per monitored step. 2610.00400 reports 0.14–0.56s; a black-box arm that matches on accuracy but costs 10× is a different conclusion.
 - **Tier at which signal appears** (S0/S1/S2) — the state-requirement result.
 - **Attribution**, where available: which turn or call drove the decision.
+- **Anchor informativeness held constant across pooled benchmarks.** Per §7's AgentDojo coarse-anchor requirement, any metric that pools cases across STAC/MT-AgentRisk/AgentDojo uses AgentDojo's coarsened (`ALL_EFFECTS`) anchor, never its ground-truth-derived one. A pooled number computed against the informative anchor is not reportable as an A4 arms result — it is a different, uncontrolled comparison and must be labeled as such if reported at all.
 
 Reconciliation rule applies: any number not reproducible from a committed artifact is struck, not footnoted.
 
