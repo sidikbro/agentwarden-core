@@ -83,7 +83,21 @@ def _case_from_user_task(suite: Any, task_id: str, user_task: Any, suite_version
     )
 
     injection_goals = [
-        {"injection_task_id": inj_id, "goal": inj_task.GOAL}
+        {
+            "injection_task_id": inj_id,
+            "goal": inj_task.GOAL,
+            # Exposed for the same reason ground_truth_calls is exposed for
+            # the user task above: it's already loaded, label-bearing data,
+            # not a new attack construction. 9 of 97 injection tasks across
+            # the default suites have an empty ground truth (their GOAL is
+            # checked by environment-state inspection, not by requiring the
+            # injection's own call) -- callers must handle that, not assume
+            # a non-empty list.
+            "ground_truth_calls": [
+                {"function": call.function, "args": dict(call.args)}
+                for call in inj_task.ground_truth(env)
+            ],
+        }
         for inj_id, inj_task in suite.injection_tasks.items()
     ]
 

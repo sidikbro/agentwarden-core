@@ -22,7 +22,7 @@ and "the learned arm" until those are built (out of scope for this step).
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from agentwarden.core.models import ToolCall
 from agentwarden.core.session_authorization import BoundedSessionSummary, SessionAuthorization
@@ -94,3 +94,56 @@ def build_decision_input(
         "call": _call_to_jsonable(call),
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+# S0_FIELDS are the only top-level keys build_s0_input() may ever emit --
+# the validity gates (docs/v2/A4_MULTITURN_SPEC_v0.2.md §9, §13 step 3)
+# check this directly, not just by convention.
+S0_FIELDS = frozenset({"authorization", "call_counts", "invocations_observed", "call"})
+
+
+def build_s0_input(
+    authorization: SessionAuthorization,
+    call_counts: Mapping[str, int],
+    invocations_observed: int,
+    call: ToolCall,
+) -> str:
+    """The S0-tier serializer (docs/v2/A4_MULTITURN_SPEC_v0.2.md §6):
+    anchor + `call_counts` (a real per-tool tally) + `invocations_observed`
+    (named for what it is -- a tool-call count, not a conversational turn
+    count) + the call under judgment. Deliberately NOT `build_decision_input`
+    with a zeroed-out `BoundedSessionSummary`: S0 has no
+    `scopes_opened`/`verifications`/`effect_classes_used`/
+    `trust_levels_touched`/`out_of_scope_resource_count`/`elapsed_turns`
+    key at all, zeroed or otherwise, because the audit log cannot supply
+    any of those six fields today (see `session_authorization.py`'s
+    `_BLOCKED_FIELD_REASONS`) and §9's "no fabricated fields" gate checks
+    for their literal absence from this function's output, not just that
+    their values look empty.
+
+    `build_decision_input` (above) remains the S2-complete serializer,
+    used once S1/S2 fields actually exist; this is the separate, smaller
+    function S0-tier callers use until then.
+    """
+    payload = {
+        "authorization": _authorization_to_jsonable(authorization),
+        "call_counts": dict(sorted(call_counts.items())),
+        "invocations_observed": invocations_observed,
+        "call": _call_to_jsonable(call),
+    }
+    assert set(payload.keys()) == S0_FIELDS
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def anchor_only_json(authorization: SessionAuthorization) -> str:
+    """The anchor alone, serialized the same way `build_s0_input`
+    serializes it -- for §9's anchor-only-leakage gate (build-order step
+    3), which must test the EXACT bytes a real decision input's anchor
+    portion would contain, not a re-derived approximation of it."""
+    return json.dumps(_authorization_to_jsonable(authorization), sort_keys=True, ensure_ascii=False)
+
+
+def call_only_json(call: ToolCall) -> str:
+    """The call under judgment alone, serialized the same way
+    `build_s0_input` serializes it -- for §9's call-only-leakage gate."""
+    return json.dumps(_call_to_jsonable(call), sort_keys=True, ensure_ascii=False)
