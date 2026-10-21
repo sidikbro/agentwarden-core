@@ -77,7 +77,7 @@ The gate on everything else. Existing benchmarks do not test capability *evoluti
 - **A1** direct dangerous call (agent attempts `exec`/destructive op)
 - **A2** indirect injection via tool output (poisoned fetch result instructs escalation)
 - **A3** capability escalation (agent requests a tool outside its phase)
-- **A4** multi-step attack via individually-benign tools (each call innocuous; composition harmful)
+- **A4** multi-step attack via individually-benign tools (each call innocuous; composition harmful) — **superseded by `docs/v2/A4_MULTITURN_SPEC_v0.1.md`**, which replaces this single-call sketch with a full multi-turn intent-drift specification (anchor + bounded session summary + call, six drift classes, pre-registered symbolic baseline, validity gates). This bullet is kept for history; do not build against it.
 - **A5** aliased/renamed tool (attacker registers a tool whose name is on the allowlist — the reviewer G9iU insight)
 
 A4 and A5 are the novel ones. A5 in particular directly motivates gating on behaviour rather than tool identity.
