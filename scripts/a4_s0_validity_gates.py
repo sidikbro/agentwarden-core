@@ -38,6 +38,14 @@ per benchmark:
    trust_levels_touched, out_of_scope_resource_count, elapsed_turns)
    appears anywhere in the serialized output.
 
+Also runs a MATCHED re-run of gate 3 alone (same task, same position --
+final vs. final -- and, additionally, the same tool where the benchmark
+allows it), alongside the original unmatched numbers, which are kept as
+the historical record rather than overwritten. See
+`benchmark/a4/s0_inputs.py::build_stac_matched_s0_pairs` and
+`build_agentdojo_matched_s0_pairs` for exactly how each benchmark's
+matched set is constructed and how much of it had no match at all.
+
 Usage:
     python3 -m scripts.a4_s0_validity_gates --stac-data /path/to/STAC_benchmark_data.json
     python3 -m scripts.a4_s0_validity_gates --stac-data ... --json-out results.json
@@ -50,7 +58,13 @@ from pathlib import Path
 from typing import Any
 
 from agentwarden.core.decision_input import S0_FIELDS, anchor_only_json, call_only_json
-from benchmark.a4.s0_inputs import S0Pair, build_agentdojo_s0_pairs, build_stac_s0_pairs
+from benchmark.a4.s0_inputs import (
+    S0Pair,
+    build_agentdojo_matched_s0_pairs,
+    build_agentdojo_s0_pairs,
+    build_stac_matched_s0_pairs,
+    build_stac_s0_pairs,
+)
 from scripts.semantic_leakage_gate import (
     AMI_FAIL_THRESHOLD,
     BAL_ACC_FAIL_THRESHOLD,
@@ -173,6 +187,24 @@ def run_all_gates(benchmark: str, pairs: list[S0Pair], skipped: int) -> list[dic
     return results
 
 
+def run_matched_gate3(benchmark: str, pairs: list[S0Pair], counts: dict[str, int]) -> dict[str, Any]:
+    print(f"=== {benchmark}: MATCHED gate 3 re-run -- {len(pairs)} matched pairs ({2 * len(pairs)} S0 instances) ===")
+    print(f"    match breakdown: {counts}\n")
+    if len(pairs) < 5:
+        result = {
+            "gate": "3_call_only_leakage_MATCHED",
+            "skipped": True,
+            "reason": f"only {len(pairs)} matched pairs -- below MIN_ROWS_PER_CLASS, CV not meaningful",
+            "match_counts": counts,
+        }
+        print(f"[{benchmark}] Gate: {result['gate']}\n    SKIPPED ({result['reason']})\n")
+        return result
+    result = run_gate123("3_call_only_leakage_MATCHED", pairs, _gate3_rows)
+    result["match_counts"] = counts
+    print_gate123(result, benchmark)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stac-data", type=Path, required=True, help="path to STAC_benchmark_data.json")
@@ -190,11 +222,27 @@ def main() -> None:
         "agentdojo": run_all_gates("AgentDojo (secondary, coarse anchor)", agentdojo_pairs, agentdojo_skipped),
     }
 
-    print("=== SUMMARY ===")
+    stac_matched_pairs, stac_matched_counts = build_stac_matched_s0_pairs(args.stac_data)
+    agentdojo_matched_pairs, agentdojo_matched_counts = build_agentdojo_matched_s0_pairs(
+        suite_version=args.agentdojo_suite_version
+    )
+    matched_results = {
+        "stac": run_matched_gate3("STAC (primary)", stac_matched_pairs, stac_matched_counts),
+        "agentdojo": run_matched_gate3("AgentDojo (secondary, coarse anchor)", agentdojo_matched_pairs, agentdojo_matched_counts),
+    }
+
+    print("=== SUMMARY (unmatched, kept as record) ===")
     for benchmark, results in all_results.items():
         for r in results:
             verdict = r["verdict"] if not r.get("skipped") else "SKIPPED"
             print(f"{benchmark:10s} {r['gate']:30s} {verdict}")
+
+    print("\n=== SUMMARY (matched gate 3 re-run) ===")
+    for benchmark, r in matched_results.items():
+        verdict = r["verdict"] if not r.get("skipped") else f"SKIPPED ({r.get('reason')})"
+        print(f"{benchmark:10s} {r['gate']:30s} {verdict}")
+
+    all_results["matched_gate3"] = matched_results
 
     if args.json_out:
         args.json_out.write_text(json.dumps(all_results, indent=2))

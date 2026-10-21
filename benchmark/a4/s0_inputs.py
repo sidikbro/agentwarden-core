@@ -131,6 +131,74 @@ def build_stac_s0_pairs(data_path: str | Path) -> tuple[list[S0Pair], int]:
     return pairs, skipped
 
 
+def build_stac_matched_s0_pairs(data_path: str | Path) -> tuple[list[S0Pair], dict[str, int]]:
+    """Matched-negative variant of `build_stac_s0_pairs`, for gate 3 only
+    (docs/v2/A4_MULTITURN_SPEC_v0.2.md §13 step 3, the follow-up re-run
+    requested after the first, unmatched gate-3 result). Matching
+    requirement: same task, same tool, and the matched tool's use must
+    sit at the position directly compared against the final step (i.e.
+    the benign candidate is still "the last executed call," and this
+    construction only keeps cases where that last executed call happens
+    to share the final malicious step's own tool name).
+
+    Confirmed directly against the real 483-case file before writing
+    this: the final malicious tool reappears among a case's own
+    already-executed calls in only 30 of 471 cases with history (6.4%),
+    and in 29 of those 30 it is specifically the LAST executed call (so
+    "same tool" and "same compared position" coincide without forcing
+    anything); the remaining 1 case has the matching tool earlier in the
+    history but not last, so same-tool and same-position can't both be
+    satisfied there and it is excluded rather than relaxed. For the
+    other 441 cases with history, STAC's own construction simply never
+    revisits the final step's tool earlier in that same case -- there is
+    no within-task, same-tool matched negative for them in the
+    benchmark's own data, and none is approximated. Returns (pairs,
+    counts) where `counts` breaks down exactly where every one of the
+    483 cases went.
+    """
+    cases = load_stac_cases(data_path)
+    pairs: list[S0Pair] = []
+    counts = {
+        "total_cases": len(cases),
+        "no_executed_tool_calls": 0,
+        "no_same_tool_match": 0,
+        "same_tool_but_not_last_position": 0,
+        "matched": 0,
+    }
+    for case in cases:
+        tool_calls = [t.tool_call for t in case.turns if t.tool_call is not None]
+        if not tool_calls:
+            counts["no_executed_tool_calls"] += 1
+            continue
+
+        final_step = case.label["malicious_tool_chain"][-1]
+        final_tool = final_step["tool_name"]
+        executed_tool_names = [c.name for c in tool_calls]
+
+        if final_tool not in executed_tool_names:
+            counts["no_same_tool_match"] += 1
+            continue
+        if tool_calls[-1].name != final_tool:
+            counts["same_tool_but_not_last_position"] += 1
+            continue
+
+        counts["matched"] += 1
+        prefix = tool_calls[:-1]
+        benign_call = tool_calls[-1]
+        attack_call = ToolCall(name=final_tool, arguments=final_step.get("parameters", {}))
+        pairs.append(
+            S0Pair(
+                case_id=case.case_id,
+                anchor=case.anchor,
+                call_counts=_tally([c.name for c in prefix]),
+                invocations_observed=len(prefix),
+                benign_call=benign_call,
+                attack_call=attack_call,
+            )
+        )
+    return pairs, counts
+
+
 def _coarsen_anchor(anchor: SessionAuthorization) -> SessionAuthorization:
     """§7's AgentDojo coarse-anchor requirement: force allowed_effects to
     ALL_EFFECTS before pooling into any A4 gate or arms comparison."""
@@ -178,3 +246,72 @@ def build_agentdojo_s0_pairs(
             )
         )
     return pairs, skipped
+
+
+def build_agentdojo_matched_s0_pairs(
+    suite_version: str = DEFAULT_SUITE_VERSION,
+    suite_names: list[str] | None = None,
+) -> tuple[list[S0Pair], dict[str, int]]:
+    """Matched-negative variant of `build_agentdojo_s0_pairs`, for gate 3
+    only. Matching requirement: same task (the UserTask's own session),
+    same position (final call vs. final call -- already true of both
+    `build_agentdojo_s0_pairs` and this function), and -- the actual
+    change here -- the SAME TOOL for both the benign and attack call,
+    rather than whichever injection task round-robin happened to assign.
+
+    Confirmed directly against the installed package: of the 97
+    UserTasks with a non-empty ground truth, 38 (39.2%) have at least
+    one same-suite InjectionTask whose own final call uses the identical
+    tool. The other 59 have no same-tool injection anywhere in their
+    suite and are excluded -- not paired with a different tool and
+    called "matched" anyway. Where more than one same-tool injection
+    exists for a task, the first by sorted injection id is used,
+    deterministically, not round-robin (round-robin was the source of
+    the tool mismatch this function exists to remove).
+    """
+    cases = load_agentdojo_cases(suite_version=suite_version, suite_names=suite_names)
+    pairs: list[S0Pair] = []
+    counts = {"total_user_tasks": 0, "no_ground_truth": 0, "no_same_tool_injection": 0, "matched": 0}
+
+    injections_by_suite: dict[str, list[dict]] = {}
+    for case in cases:
+        injections_by_suite.setdefault(case.label["suite"], case.label["injection_goals"])
+
+    for case in cases:
+        counts["total_user_tasks"] += 1
+        tool_calls = [t.tool_call for t in case.turns]
+        if not tool_calls:
+            counts["no_ground_truth"] += 1
+            continue
+        prefix = tool_calls[:-1]
+        benign_call = tool_calls[-1]
+        final_tool = benign_call.name
+
+        suite_injections = injections_by_suite[case.label["suite"]]
+        same_tool_injections = sorted(
+            (
+                g
+                for g in suite_injections
+                if g["ground_truth_calls"] and g["ground_truth_calls"][-1]["function"] == final_tool
+            ),
+            key=lambda g: g["injection_task_id"],
+        )
+        if not same_tool_injections:
+            counts["no_same_tool_injection"] += 1
+            continue
+
+        counts["matched"] += 1
+        last_gt = same_tool_injections[0]["ground_truth_calls"][-1]
+        attack_call = ToolCall(name=last_gt["function"], arguments=last_gt["args"])
+
+        pairs.append(
+            S0Pair(
+                case_id=case.case_id,
+                anchor=_coarsen_anchor(case.anchor),
+                call_counts=_tally([c.name for c in prefix]),
+                invocations_observed=len(prefix),
+                benign_call=benign_call,
+                attack_call=attack_call,
+            )
+        )
+    return pairs, counts

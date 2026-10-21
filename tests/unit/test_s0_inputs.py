@@ -10,9 +10,15 @@ import pytest
 
 from agentwarden.core.decision_input import S0_FIELDS, anchor_only_json, build_s0_input, call_only_json
 from benchmark.a4.common import ALL_EFFECTS
-from benchmark.a4.s0_inputs import build_agentdojo_s0_pairs, build_stac_s0_pairs
+from benchmark.a4.s0_inputs import (
+    build_agentdojo_matched_s0_pairs,
+    build_agentdojo_s0_pairs,
+    build_stac_matched_s0_pairs,
+    build_stac_s0_pairs,
+)
 
 STAC_FIXTURE = Path(__file__).parent.parent / "fixtures" / "stac_sample.json"
+STAC_TOOL_REUSE_FIXTURE = Path(__file__).parent.parent / "fixtures" / "stac_sample_tool_reuse.json"
 
 
 def test_build_s0_input_only_has_s0_fields():
@@ -111,4 +117,49 @@ def test_agentdojo_injection_selection_is_deterministic_round_robin():
     pytest.importorskip("agentdojo")
     pairs_a, _ = build_agentdojo_s0_pairs(suite_names=["banking"])
     pairs_b, _ = build_agentdojo_s0_pairs(suite_names=["banking"])
+    assert [p.attack_call for p in pairs_a] == [p.attack_call for p in pairs_b]
+
+
+def test_stac_matched_pairs_finds_within_task_same_tool_match():
+    pairs, counts = build_stac_matched_s0_pairs(STAC_TOOL_REUSE_FIXTURE)
+    assert counts == {
+        "total_cases": 2,
+        "no_executed_tool_calls": 0,
+        "no_same_tool_match": 1,  # case 101: get_hotels_in_city vs send_email, no reuse
+        "same_tool_but_not_last_position": 0,
+        "matched": 1,  # case 100: delete_file reused as both benign and attack tool
+    }
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert pair.benign_call.name == "delete_file"
+    assert pair.attack_call.name == "delete_file"
+    assert pair.benign_call.arguments != pair.attack_call.arguments
+
+
+def test_stac_matched_pairs_on_original_fixture_has_no_matches():
+    # Neither case in the original stac_sample.json fixture reuses its
+    # final tool earlier in the same case -- confirms the "no match"
+    # path is counted, not silently dropped, when none exists at all.
+    pairs, counts = build_stac_matched_s0_pairs(STAC_FIXTURE)
+    assert pairs == []
+    assert counts["matched"] == 0
+    assert counts["no_same_tool_match"] == 2
+
+
+def test_agentdojo_matched_pairs_use_same_tool_for_both_calls():
+    pytest.importorskip("agentdojo")
+    pairs, counts = build_agentdojo_matched_s0_pairs(suite_names=["banking"])
+    assert counts["total_user_tasks"] == 16
+    assert counts["matched"] + counts["no_same_tool_injection"] + counts["no_ground_truth"] == 16
+    assert len(pairs) == counts["matched"]
+    for pair in pairs:
+        assert pair.benign_call.name == pair.attack_call.name
+        assert pair.anchor.allowed_effects == ALL_EFFECTS
+
+
+def test_agentdojo_matched_pairs_is_deterministic():
+    pytest.importorskip("agentdojo")
+    pairs_a, counts_a = build_agentdojo_matched_s0_pairs(suite_names=["banking"])
+    pairs_b, counts_b = build_agentdojo_matched_s0_pairs(suite_names=["banking"])
+    assert counts_a == counts_b
     assert [p.attack_call for p in pairs_a] == [p.attack_call for p in pairs_b]
