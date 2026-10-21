@@ -1,5 +1,7 @@
 # A4 — Multi-Turn Intent-Drift Governance: Experiment Specification
 
+**SUPERSEDED (2026-10-21) by [`docs/v2/A4_MULTITURN_SPEC_v0.2.md`](A4_MULTITURN_SPEC_v0.2.md).** Kept intact below as the historical record of the design before two findings invalidated it: the literature review (`docs/v2/RELATED_WORK_multiturn_v1.md`) showed this claim and architecture are substantially published (IntentCap, Representation Transitions, TaskTracker), and six of this spec's §4(b) bounded-summary fields turned out to require infrastructure (a persisted queryable audit store, a scope concept, an effect-class taxonomy) that does not exist and is a quarter of engineering on its own. v0.2 is a black-box-vs-white-box comparison on existing benchmarks (STAC, MT-AgentRisk, AgentDojo) instead. Do not build against this version.
+
 **Version:** 0.1 (design — nothing implemented)
 **Date:** 2026-10-21
 **Depends on:** `docs/v2/provenance_representation.md`, `scripts/semantic_leakage_gate.py`, `AGENTWARDEN_V2_POSITIONING_v2.md` §4

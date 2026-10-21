@@ -1,0 +1,179 @@
+# A4 — Black-Box vs White-Box Multi-Turn Governance: Experiment Specification
+
+**Version:** 0.2 (design — supersedes v0.1 entirely)
+**Date:** 2026-10-21
+**Depends on:** `docs/v2/provenance_representation.md`, `docs/v2/RELATED_WORK_multiturn_v1.md`, `scripts/semantic_leakage_gate.py`
+**Implemented so far:** `SessionAuthorization`, `BoundedSessionSummary`, `VerificationRecord`, `build_decision_input()` (commit `056dfab`)
+
+---
+
+## 1. What changed from v0.1, and why
+
+Two findings landed after v0.1 was written. Each invalidates a different part of it.
+
+**(a) The literature.** A4 v0.1's claim — a learned policy can judge intent drift where a symbolic rule cannot — is substantially established, and its architecture is substantially published.
+
+- **IntentCap** ([arXiv:2609.14631](https://arxiv.org/abs/2609.14631), Sept 2026) is v0.1 §3–§5: capabilities scoped to task intent rather than session lifetime, field-level source ownership so no context source can fill another's fields, leases that narrow and never widen, an LLM generating leases and a *deterministic checker* enforcing them. Its gap: no quantitative evaluation.
+- **Representation Transitions** ([arXiv:2610.00400](https://arxiv.org/html/2610.00400), Oct 2026) is v0.1's result: per-step monitors miss harm accumulating across individually-permissible turns; rule-based AgentSpec "never fires" on their decomposition set (ASR 0.80–1.00); their cumulative monitor achieves ASR 84%→25% at 12% realized false-alarm rate, utility 93%→85%, 0.14–0.56s/step.
+- **TaskTracker** ([arXiv:2406.00799](https://arxiv.org/abs/2406.00799), SaTML 2025) is the canonical task-drift-from-activations result, with activation data released.
+
+Re-deriving these with 40–60 hand-authored pairs per drift class would spend the whole runway to reproduce known findings.
+
+**(b) The infrastructure.** `AuditLogger.log_pipeline_result()` is a single `logger.info()` emitting `session_id`, `tool_name`, `decision`, `latency_ms`. It is not a persisted, queryable, session-keyed store. Six of v0.1 §4(b)'s seven fields are unavailable, each for a different missing reason: no persisted store, no scope concept in the data model, no structured verification record, no effect-class taxonomy, `trust_level` never written to the log, and no turn counter. Building all six on spec is a quarter of engineering before a single measurement exists.
+
+**The common lesson.** v0.1 assumed the expensive thing (hand-authored data, full session state) and the cheap thing (a known result) were the other way round. v0.2 inverts both: measure with what exists, on benchmarks that exist, and build only what the measurement justifies.
+
+---
+
+## 2. The claim under test
+
+> Every effective multi-turn governance result to date reads the acting model's internal activations. Production agents overwhelmingly call hosted models through a gateway, where activations are unavailable. **Can a black-box governance layer — trusted anchor, structured session state, call under judgment, no model internals — match a white-box activation probe on multi-turn drift, at matched false-alarm rate?**
+
+The question is unanswered, deployment-critical, and publishes either way:
+
+- **Black-box matches white-box** → gateway architectures are viable; the governance layer needs no model access, which is a strong positive result with immediate practical consequence.
+- **Black-box does not match** → effective multi-turn governance structurally requires white-box access, so every proxy and gateway deployment in production is limited by construction. Stated with numbers and a diagnosed cause, this is the stronger and more surprising paper.
+
+**What makes it ours rather than a cross-paper comparison:** the white-box results use locally hosted open models. We have the same class of model and the HPC capacity to run both arms **on the same model, the same benchmark, the same false-alarm budget**. Nobody has run that controlled comparison; the existing numbers come from different papers with different setups and are not comparable.
+
+---
+
+## 3. Threat model
+
+Unchanged from v0.1. The adversary controls everything a tool returns — retrieved documents, file contents, web pages, subagent output — and may control earlier user-role turns in a relayed session. The adversary does not control the `SessionAuthorization`, the enforcement layer's audit log, or state derived from it.
+
+Every input to the governance decision comes from the side the adversary cannot write, with one stated exception (§5).
+
+---
+
+## 4. Prior-art placement — mandatory framing
+
+The paper must place these before claiming anything:
+
+| Work | What it establishes | What we must not claim |
+|---|---|---|
+| IntentCap | Task-intent-anchored capability scoping; source-ownership; narrow-only leases; deterministic enforcement | The architecture. Ours is the same family; our contribution is the evaluation IntentCap lacks |
+| Representation Transitions | Cumulative drift beats per-step monitors; rule-based monitors never fire on decomposition attacks | That per-step monitoring is insufficient — that is theirs, we cite it |
+| TaskTracker | Task drift is detectable from activation deltas | Novelty for drift detection as such |
+| STAC | Sequential tool-attack chaining; 483 cases; ~0.5% prompt harmfulness; 91.2% ASR by T+2 | A novel compositional attack construct |
+| Local Monitors / Compositional Harm | Formal bound: a single-view local detector cannot separate locally-benign fragments beyond total variation | The impossibility argument |
+| Three-Source Permissions | Symbolic intersection bounding a learned component | Hybrid precedence as a novel architecture |
+
+Claiming the design as new, a month after IntentCap, would be read as unawareness. Claiming the evaluation it lacks is both honest and sufficient.
+
+---
+
+## 5. The anchor
+
+`SessionAuthorization`, implemented in `056dfab` as a frozen dataclass: `authorized_task`, `task_type`, `scope`, `allowed_effects`, `max_sensitivity`, `issued_by`, `issued_at`, `expires_at`. Set once at session start by a trusted producer; never inferred from conversation; a change requires a new authorization event emitted by the enforcement layer.
+
+`authorized_task` is natural language and is the **one prose field the decision reads**. It is safe because a trusted producer writes it before the adversary has any influence. This exception must be stated explicitly in the paper; a reviewer will look for exactly it.
+
+Cite IntentCap's narrowing rule here. This is the same property arrived at independently, and saying so costs nothing.
+
+---
+
+## 6. Decision input — tiered, not all-or-nothing
+
+v0.1 specified one summary requiring six missing subsystems. v0.2 specifies three tiers, and **S0 is what runs first**.
+
+**S0 — available today.** Anchor + `call_counts` (real per-tool tally) + `invocations_observed` (named for what it is: a tool-call count, not a conversational turn count) + the call under judgment. No fabricated fields; `build_bounded_summary()` continues to raise `AuditLogInsufficientError` rather than approximate.
+
+**S1 — cheap additions, built only if S0 shows signal.** A persisted, session-keyed audit store (prerequisite for everything else); `trust_levels_touched` (the field exists on `GovernanceContext` and merely isn't logged); a real turn counter.
+
+**S2 — expensive, built only if S1 is insufficient.** A scope concept in the data model, an effect-class taxonomy, and structured `VerificationRecord` emission. Each is a design decision in its own right, not a field to add.
+
+**Excluded at every tier:** tool output text, retrieved document content, agent reasoning text, raw conversation history.
+
+The tiering is itself a result. "Which state does black-box governance actually need?" is answered by which tier first carries signal, and that is a more useful answer than a single accuracy figure.
+
+---
+
+## 7. Benchmarks — no hand-authored pairs in v0
+
+| Benchmark | Role |
+|---|---|
+| **STAC** ([2509.25624](https://arxiv.org/html/2509.25624v2)) | Primary. Sequential chains, only the final call malicious; 483 cases, 1,352 interaction sets |
+| **MT-AgentRisk** (via [2610.00400](https://arxiv.org/html/2610.00400)) | Primary. The set on which rule-based monitors never fire — the hardest available case for a symbolic baseline |
+| **AgentDojo** | Mandatory for comparable utility-cost numbers; every competitor reports it |
+| **Cross-Session Threats** ([2604.21131](https://arxiv.org/html/2604.21131v1)) | Secondary, if the anchor's session-lifetime property is to be tested |
+| Hand-authored pairs | **Suspended.** Revisit only if the benchmarks prove unable to express a needed condition |
+
+Anchors are not supplied by these benchmarks and must be derived. The derivation procedure must be mechanical and stated — e.g. the benchmark's declared task becomes `authorized_task`, with `scope`/`allowed_effects` inferred by a fixed rule — and must not be hand-tuned per case, which would smuggle the label into the anchor.
+
+---
+
+## 8. Arms
+
+All four run on the **same model**, the **same benchmark split**, and are compared at **matched false-alarm rate**.
+
+1. **Per-step floor.** The existing D2 classifier judging each call in isolation. Establishes the floor the literature predicts (near-chance on locally-benign chains).
+2. **Black-box symbolic.** Rules over the S0/S1/S2 input, including a capability-closure rule for staged accumulation. Written to win, frozen and committed with its hash **before** any learned arm is evaluated; may not be weakened afterward.
+3. **Black-box learned.** Same serialized input as arm 2, byte-identical (`build_decision_input()` plus its regression test). Precedence enforced at evaluation: a learned ALLOW over a symbolic DENY is discarded and counted as the DENY.
+4. **White-box reference.** A difference-of-means probe on hidden-state deltas, per 2610.00400, on the same local model. This is the ceiling the black-box arms are measured against, reproduced internally rather than quoted across papers.
+
+Arm 4 is what makes the comparison controlled. If it cannot be reproduced to within a reasonable margin of the published numbers, say so and report the comparison as bounded by that failure rather than proceeding as if the ceiling were established.
+
+---
+
+## 9. Validity gates
+
+Run before any arm is trained or tuned. Thresholds stated in each script.
+
+1. **Serialized-input leakage.** `semantic_leakage_gate.py` on the full serialized decision input must fail to recover labels beyond what the anchor/history relation legitimately implies. Long inputs carry more register than short — this is the gate most likely to fire.
+2. **Anchor-only leakage.** The derived anchor alone must not predict the label. If it does, the derivation procedure is smuggling ground truth.
+3. **Call-only leakage.** The call under judgment alone must not predict the label on the chain sets. STAC reports ~0.5% prompt harmfulness, which predicts this should pass; verify rather than assume.
+4. **No fabricated fields.** Automated assertion that no tier emits a field the audit log cannot supply.
+
+A gate failure stops the line and is recorded as a result.
+
+---
+
+## 10. Metrics
+
+- **ASR reduction at matched false-alarm rate.** The FAR must be fixed across arms before measurement; 2610.00400's 12% realized rate is the natural reference point. An ASR number without its FAR is not reportable.
+- **Benign utility**, reported for every arm at that same FAR.
+- **Per-arm overhead**, wall-clock per monitored step. 2610.00400 reports 0.14–0.56s; a black-box arm that matches on accuracy but costs 10× is a different conclusion.
+- **Tier at which signal appears** (S0/S1/S2) — the state-requirement result.
+- **Attribution**, where available: which turn or call drove the decision.
+
+Reconciliation rule applies: any number not reproducible from a committed artifact is struck, not footnoted.
+
+---
+
+## 11. Reporting rules — fixed now
+
+1. **Black-box S0/S1 matches white-box at matched FAR.** Report it as the headline. Gateway architectures are viable; name the tier required.
+2. **Black-box matches only at S2.** Report the infrastructure cost as the finding: black-box governance is possible but requires scope, effect and verification state that no current agent framework maintains.
+3. **Black-box does not match at any tier.** This is the primary negative result and is reported as the headline, not buried. Required: a diagnosed cause, and the gap quantified at matched FAR.
+4. **Symbolic matches learned on the black-box side.** Report it. The positioning document's §2 claim extends: the learned layer's role is smaller still.
+5. **The white-box arm fails to reproduce.** Report the comparison as bounded; do not substitute published numbers from a different setup.
+6. **No re-partitioning or post-hoc FAR selection.** The FAR is fixed before measurement, and arms are not re-tuned after seeing results.
+
+---
+
+## 12. Staged decision gates
+
+The point of v0.2 is that each stage decides whether the next is worth paying for.
+
+| Gate | Decision |
+|---|---|
+| **G1** — S0 on STAC, arms 1–3 | Does any black-box signal exist at all? If none, S1/S2 are unlikely to rescue it; consider reporting the negative result early |
+| **G2** — arm 4 reproduced | Is the ceiling established? If not, the comparison is bounded and that must be said |
+| **G3** — S0 result vs ceiling | Build S1 only if S0 shows partial signal. Do not build S1 to rescue a null S0 without a reason to expect it to |
+| **G4** — S1 result | Build S2 only if S1 narrows the gap. S2 is a quarter of work and needs evidence, not hope |
+
+---
+
+## 13. Build order
+
+| # | Step | Blocks | Parallel with |
+|---|---|---|---|
+| 1 | STAC + MT-AgentRisk harness adapters; mechanical anchor derivation | all | 2 |
+| 2 | AgentDojo harness (independent, mandatory regardless of A4) | — | 1 |
+| 3 | Validity gates §9 on S0 inputs | 4,5 | — |
+| 4 | Symbolic baseline, frozen and committed with hash | 6 | 5 |
+| 5 | White-box reference arm (local model, HPC) | 6 | 4 |
+| 6 | Per-step floor + black-box learned arm; metrics §10 at matched FAR | G1–G3 | — |
+
+Steps 1–2 start now. Nothing in S1 or S2 is built until G3.
