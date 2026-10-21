@@ -1,0 +1,17 @@
+# Synthetic fixture matching the schema documented in
+# github.com/CHATS-lab/MT-AgentRisk_ToolShield's agentrisk/run_eval.py
+# (load_turn_manager). NOT real MT-AgentRisk data -- the real dataset is
+# gated; see benchmark/a4/mt_agentrisk_adapter.py's module docstring.
+turns:
+  - id: turn-1
+    instruction_file: turn_1.md
+    checkpoint_id: list_files
+    max_steps: 5
+    success_patterns:
+      - "notes.txt"
+  - id: turn-2
+    instruction_file: turn_2.md
+    checkpoint_id: move_file
+    max_steps: 5
+    success_patterns:
+      - "moved"
