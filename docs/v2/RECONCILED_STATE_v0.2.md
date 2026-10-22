@@ -503,6 +503,46 @@ This is not a near-miss or an artifact of a strict matching rule: STAC's own con
 
 **Per instruction: STAC is unfit for A4's central claim, and this is recorded as a finding, not routed around.** The claim under test (`docs/v2/A4_MULTITURN_SPEC_v0.2.md` §2) is whether a black-box arm can match a white-box one at detecting session-level drift. STAC's own executed-history/attack-chain length relationship (`k = L+1`, universally) means the attack candidate is *structurally* always exactly one step past wherever the benign history stops, in effectively every case — the same mechanism already shown (§12, §12a, §13) to drive arm 0's strength. A length-matched negative, which would isolate position/length as a confound the way §12a isolated tool identity, cannot be built from STAC at the scale (~150 cases) needed to say anything with this benchmark. No further construction is attempted to route around this — per standing instruction, a benchmark-fitness result at this point is reported, not iterated against.
 
+## 14. Shortcut audit across every A4-relevant benchmark obtainable without credentials (2026-10-22)
+
+Instruction: build a reusable harness (`benchmark/a4/shortcut_audit.py`) measuring, for every benchmark obtainable without credentials, how well tool identity alone separates attack from benign actions (out-of-fold AUC + TPR@FAR=0.12), plus the existing action-content leakage gate, plus whether a tool-matched negative exists. Cover ASEval, Boiling the Frog, Adaptive Adversaries, Cross-Session Threats, InjecAgent, Agent-SafetyBench, R-Judge, ToolEmu, SHADE-Arena, alongside STAC/AgentDojo as reference points. Record and move on for anything gated or live-execution-only; do not approximate. One table out. No baseline, no arms, no training.
+
+**Harness** (`benchmark/a4/shortcut_audit.py`, `benchmark/a4/audit_loaders/`): takes `AuditRecord(benchmark, task_id, tool_name, arguments, label)` and reports tool-identity-only AUC/TPR@FAR (5-fold CV logistic regression, one-hot(tool_name), no position feature — §13a already showed position contributes almost nothing on STAC, and "position in sequence" isn't even a comparable concept across benchmarks with different session shapes), the action-content leakage gate (`scripts/semantic_leakage_gate.py`'s exact signals/thresholds, on the serialized `(tool_name, arguments)` action — the same question gate 3 already asked), and the tool-matched-negative fraction (within the same task, does the identical tool name appear in both a benign and an attack action). STAC's and AgentDojo's loaders feed every candidate action per task (not the strict 1:1 minimal pair the earlier gate/arm measurements used), so "n" and the exact numbers here differ, by deliberate construction, from §12/§13's — both are valid, answering slightly different questions, and neither supersedes the other.
+
+**Investigated, not obtained or not usable (6 of 9 — recorded and not routed around):**
+
+| Benchmark | Status | Reason |
+|---|---|---|
+| Boiling the Frog (2605.22643) | NOT OBTAINED | No public repo or data at all; and inherently live-execution-only even if one existed — each scenario is run in a fresh Docker container and judged against final filesystem state, not a labeled static action. |
+| Adaptive Adversaries (2607.18063) | NOT APPLICABLE | Freely obtainable (`sofasogood/adaptive-adversaries`, CC BY 4.0), but a pure text/conversational jailbreak benchmark (LLM attacker vs. LLM defender) — no `tool_name`/`arguments` concept anywhere in its data. |
+| Cross-Session Threats (2604.21131) | NOT APPLICABLE | Freely obtainable (`intrinsec-ai/cstm-bench` on HuggingFace, MIT), but every session is free-form natural-language chat text — zero tool-call-shaped fields across all 54 scenarios checked directly. |
+| Agent-SafetyBench | NOT OBTAINED | Freely clonable (`thu-coai/Agent-SafetyBench`), but ships only risky *task instructions* + tool schemas, never an executed `(tool_name, arguments)` action — generating one requires running a live agent against its environments. |
+| R-Judge | NOT USABLE | Freely clonable (`Lordog/R-Judge`, 571 records / 1,459 actions), but only 13.6% (199/1,459) of its actions have an extractable tool-call structure; the rest are free-text UI phrases ("click \<Allow always\>") with no tool identifier. |
+| ToolEmu | NOT OBTAINED | Freely clonable (`ryoungj/toolemu`), but its 144 cases are natural-language risk *descriptions* ("The Agent may delete in-progress important tasks"), never concrete tool calls — generating one requires running its LM-emulated sandbox (~$170 in API cost for the full set, per its own README). |
+| SHADE-Arena (2506.15740) | NOT OBTAINED | Live-execution-only (transcripts only exist after running a live LLM against it), and the one path to pre-recorded transcripts is access-gated (email the authors / private repo split). Also non-independent of STAC regardless: STAC's own 483 cases already draw 390 from SHADE-Arena. |
+
+In every one of these six cases, the limiting factor was checked directly against the real, downloaded repository or dataset — not inferred from the paper's abstract — and no substitute was approximated (no fabricated tool names, no hand-converted prose-to-call mappings, no live-execution run to manufacture a static dataset).
+
+**Obtained and usable (4): the final table.**
+
+| Benchmark | n | tool-id AUC | TPR@FAR=.12 | content gate | tool-matched |
+|---|---|---|---|---|---|
+| InjecAgent | 2,652 | **1.000** | **1.000** | FAIL | 1/1,054 |
+| STAC | 1,249 | 0.939 | 0.857 | FAIL | 30/471 |
+| AgentDojo | 365 | 0.850 | 0.692 | FAIL | 4/4 |
+| ASEval | 2,183 | 0.660 | 0.396 | FAIL | 233/403 |
+
+**Attack/benign definition and extraction, per benchmark, stated explicitly (per instruction — the audit's credibility rests on this):**
+
+- **InjecAgent** (arXiv:2403.02691, `uiuc-kang-lab/InjecAgent`, 1,054 real test cases — 510 direct-harm + 544 data-stealing): `benign` = the case's own **User Tool** call; `attack` = each of the case's **Attacker Tools**, with an empty arguments dict (InjecAgent's static data specifies only the attacker's target tool, not concrete call arguments — those only exist if a live agent actually complies, which was not run or approximated). `task_id` = source file + row index.
+- **STAC** (`benchmark/a4/audit_loaders/stac.py`): `attack` = the chain's held-out final step; `benign` = every already-executed call in that case's `interaction_history` (broader than §12/§13's strict 1:1 pair). `task_id` = case id.
+- **AgentDojo** (`benchmark/a4/audit_loaders/agentdojo.py`): `benign` = every call in every UserTask's own `ground_truth`; `attack` = the final ground-truth call of every InjectionTask registered for that suite. `task_id` = **suite name** (the matched-negative question is inherently suite-scoped here, per §12a).
+- **ASEval** (arXiv:2605.22321, `antgroup/Agent3Sigma-Stage`, `data/advance/injected.json`, 726 scenarios / 2,183 usable turns): `attack` = a turn where `injection_in_user` or `injection_in_tool` is true; `benign` = otherwise. `task_id` = scenario id. **Stated limitation:** this export records only `tool_name` and the tool's response text, never the call's real arguments — `arguments` is populated as `{"tool_response": <truncated>}`, so ASEval's content-leakage-gate FAIL measures response-text leakage, not argument leakage the way the other three rows' gates do.
+
+**Reading the table.** Tool identity alone separates attack from benign action at well above chance on every one of the four obtained benchmarks (AUC 0.660–1.000), and the action-content leakage gate fails on all four — this is not a STAC-specific artifact (§12/§13's original framing); it recurs across every benchmark this audit could obtain real data for. InjecAgent's perfect 1.000/1.000 is a real, construction-driven result, not a leak to fix: InjecAgent deliberately draws user actions and attacker actions from disjoint tool-name pools by design, confirmed directly against the raw tool-name sets (17 distinct benign tools, 63 distinct attack tools, essentially no overlap — hence also its near-zero tool-matched fraction, 1/1,054). ASEval is the one partial counterexample (AUC 0.660, well above chance but the weakest of the four) — consistent with its construction injecting instructions into trajectories that otherwise keep using the same tools, so tool identity carries less of the signal there than in the other three.
+
+No baseline, no arms, no training were built in this entry.
+
 ---
 
 ## Summary — what's blocking Phase 1.5 / Phase 3
