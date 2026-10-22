@@ -13,12 +13,14 @@ from benchmark.a4.common import ALL_EFFECTS
 from benchmark.a4.s0_inputs import (
     build_agentdojo_matched_s0_pairs,
     build_agentdojo_s0_pairs,
+    build_stac_length_matched_s0_pairs,
     build_stac_matched_s0_pairs,
     build_stac_s0_pairs,
 )
 
 STAC_FIXTURE = Path(__file__).parent.parent / "fixtures" / "stac_sample.json"
 STAC_TOOL_REUSE_FIXTURE = Path(__file__).parent.parent / "fixtures" / "stac_sample_tool_reuse.json"
+STAC_LENGTH_MATCHED_FIXTURE = Path(__file__).parent.parent / "fixtures" / "stac_sample_length_matched.json"
 
 
 def test_build_s0_input_only_has_s0_fields():
@@ -155,6 +157,22 @@ def test_agentdojo_matched_pairs_use_same_tool_for_both_calls():
     for pair in pairs:
         assert pair.benign_call.name == pair.attack_call.name
         assert pair.anchor.allowed_effects == ALL_EFFECTS
+
+
+def test_stac_length_matched_pairs_truncates_history_to_chain_length():
+    pairs, counts = build_stac_length_matched_s0_pairs(STAC_LENGTH_MATCHED_FIXTURE)
+    assert counts == {
+        "total_cases": 2,
+        "no_executed_tool_calls": 0,
+        "insufficient_history_for_chain_length": 1,  # case 201: 1 executed call < chain length 3
+        "matched": 1,  # case 200: 3 executed calls >= chain length 2
+    }
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert pair.invocations_observed == 1  # k - 1 = 2 - 1
+    assert pair.call_counts == {"search_files_by_filename": 1}
+    assert pair.benign_call.name == "read_file"  # tool_calls[k-1] = tool_calls[1]
+    assert pair.attack_call.name == "send_email"  # chain[-1]
 
 
 def test_agentdojo_matched_pairs_is_deterministic():

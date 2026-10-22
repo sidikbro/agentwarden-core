@@ -146,9 +146,17 @@ def main() -> None:
     print(f"STAC: {len(pairs)} pairs ({2 * len(pairs)} S0 instances), {skipped} cases skipped\n")
 
     print("=== Arm 0 (shortcut baseline: tool identity + position) ===")
-    arm0_labels, arm0_score_list, _ = arm0_scores(pairs)
-    arm0_result = tpr_at_far(arm0_labels, arm0_score_list, TARGET_FAR)
-    print(f"    TPR @ FAR={TARGET_FAR}: {arm0_result['tpr_at_target_far']:.3f}  (AUC={arm0_result['auc']:.3f})\n")
+    arm0_results = {}
+    for position_feature in ("index_from_start", "index_from_end_oracle"):
+        labels, scores, _ = arm0_scores(pairs, position_feature=position_feature)
+        result = tpr_at_far(labels, scores, TARGET_FAR)
+        arm0_results[position_feature] = {**result, "n": len(labels)}
+        print(f"    [{position_feature}] TPR @ FAR={TARGET_FAR}: {result['tpr_at_target_far']:.3f}  (AUC={result['auc']:.3f})")
+    print(
+        "    index_from_start is the corrected, reportable arm 0 (the oracle variant is kept only "
+        "for the historical record -- see docs/v2/RECONCILED_STATE_v0.2.md §13a)\n"
+    )
+    arm0_result = arm0_results["index_from_start"]
 
     print(f"=== Arm 1 (per-step floor: existing D2 classifier, zero-shot) ===")
     arm1_labels, arm1_score_list, _, arm1_raw = run_arm1_batched(pairs, args.adapter_dir, args.batch_size)
@@ -158,12 +166,13 @@ def main() -> None:
     print(f"    TPR @ FAR={TARGET_FAR}: {arm1_result['tpr_at_target_far']:.3f}  (AUC={arm1_result['auc']:.3f})\n")
 
     ceiling = 1.0
-    headroom = ceiling - arm1_result["tpr_at_target_far"]
-    print("=== Headroom between arm 1 and ceiling (perfect TPR = 1.0) ===")
-    print(f"    headroom = {headroom:.3f}")
+    strongest_baseline_tpr = max(arm0_result["tpr_at_target_far"], arm1_result["tpr_at_target_far"])
+    headroom = ceiling - strongest_baseline_tpr
+    print("=== Headroom between the strongest trivial baseline (max(arm 0, arm 1)) and ceiling (perfect TPR = 1.0) ===")
+    print(f"    strongest baseline TPR = {strongest_baseline_tpr:.3f}  headroom = {headroom:.3f}")
     if headroom <= NEAR_CEILING_HEADROOM:
         print(
-            f"    Arm 1 is within {NEAR_CEILING_HEADROOM} of ceiling at this FAR -- "
+            f"    The strongest trivial baseline is within {NEAR_CEILING_HEADROOM} of ceiling at this FAR -- "
             "STAC leaves little room to demonstrate session-state value for arm 3. "
             "Per instruction: this is a benchmark-fitness finding, reported and stopped on, not worked around."
         )
@@ -174,7 +183,7 @@ def main() -> None:
         "stac_pairs": len(pairs),
         "stac_skipped": skipped,
         "target_far": TARGET_FAR,
-        "arm0": {**arm0_result, "n": len(arm0_labels)},
+        "arm0": arm0_results,
         "arm1": {
             **arm1_result,
             "n": len(arm1_labels),
@@ -182,6 +191,7 @@ def main() -> None:
             "adapter_dir": str(args.adapter_dir),
         },
         "ceiling": ceiling,
+        "strongest_baseline_tpr": strongest_baseline_tpr,
         "headroom": headroom,
         "near_ceiling_headroom_threshold": NEAR_CEILING_HEADROOM,
     }

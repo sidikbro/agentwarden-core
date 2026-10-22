@@ -23,6 +23,25 @@ def test_arm0_scores_returns_one_score_per_instance():
     assert all(0.0 <= s <= 1.0 for s in scores)
 
 
+def test_arm0_index_from_start_is_the_default_and_differs_from_oracle():
+    pairs, _ = build_stac_s0_pairs(STAC_FIXTURE)
+    _, default_scores, _ = arm0_scores(pairs)
+    _, explicit_start_scores, _ = arm0_scores(pairs, position_feature="index_from_start")
+    assert default_scores == explicit_start_scores
+
+    _, oracle_scores, _ = arm0_scores(pairs, position_feature="index_from_end_oracle")
+    # not asserting a direction -- just that the two position encodings are
+    # genuinely different code paths, not the same computation under a
+    # different name.
+    assert default_scores != oracle_scores
+
+
+def test_arm0_scores_rejects_unknown_position_feature():
+    pairs, _ = build_stac_s0_pairs(STAC_FIXTURE)
+    with pytest.raises(ValueError):
+        arm0_scores(pairs, position_feature="nonsense")
+
+
 def test_arm1_scores_uses_injected_classify_fn_and_handles_parse_failure():
     pairs, _ = build_stac_s0_pairs(STAC_FIXTURE)
 

@@ -199,6 +199,76 @@ def build_stac_matched_s0_pairs(data_path: str | Path) -> tuple[list[S0Pair], di
     return pairs, counts
 
 
+def build_stac_length_matched_s0_pairs(data_path: str | Path) -> tuple[list[S0Pair], dict[str, int]]:
+    """Length-matched (not tool-matched) negative construction for STAC,
+    addressing the index-from-end confound directly at the pair-construction
+    level rather than only in arm 0's own feature encoding
+    (`benchmark/a4/arms.py::arm0_scores`'s `position_feature` correction).
+
+    The unmatched/tool-matched constructions above both fix `benign_call`
+    to "the last executed call in the case's full `interaction_history`,"
+    whatever that history's own length happens to be. `attack_call` is
+    always `malicious_tool_chain[-1]` -- the final step of a chain of
+    length `k = len(malicious_tool_chain)`. These two calls are therefore
+    never guaranteed to sit at the same chain position: the attack
+    candidate is always "step k of a k-step chain" by construction, while
+    the benign candidate's position depends only on how long that
+    particular case's executed history happened to be, which has no
+    relationship to k.
+
+    This function instead truncates each case's executed history to its
+    *own* attack chain's length k and takes the k-th (final) call of that
+    truncation as `benign_call`, with the first k-1 calls as the shared
+    prefix -- i.e. both `benign_call` and `attack_call` are now "the final
+    step of a k-step sequence," matching chain position directly, with no
+    claim about matching tool identity (that is the separate, already-
+    answered question `build_stac_matched_s0_pairs` tests).
+
+    Returns (pairs, counts). `counts["no_executed_tool_calls"]` and
+    `counts["insufficient_history_for_chain_length"]` partition the cases
+    that cannot support a length-matched pair at all (zero executed calls,
+    or an executed history shorter than its own attack chain's length);
+    `counts["matched"]` is how many of the 471 cases with any executed
+    history (`build_stac_s0_pairs`'s own pool) support one.
+    """
+    cases = load_stac_cases(data_path)
+    pairs: list[S0Pair] = []
+    counts = {
+        "total_cases": len(cases),
+        "no_executed_tool_calls": 0,
+        "insufficient_history_for_chain_length": 0,
+        "matched": 0,
+    }
+    for case in cases:
+        tool_calls = [t.tool_call for t in case.turns if t.tool_call is not None]
+        if not tool_calls:
+            counts["no_executed_tool_calls"] += 1
+            continue
+
+        chain = case.label["malicious_tool_chain"]
+        k = len(chain)
+        if len(tool_calls) < k:
+            counts["insufficient_history_for_chain_length"] += 1
+            continue
+
+        counts["matched"] += 1
+        prefix = tool_calls[: k - 1]
+        benign_call = tool_calls[k - 1]
+        final_step = chain[-1]
+        attack_call = ToolCall(name=final_step["tool_name"], arguments=final_step.get("parameters", {}))
+        pairs.append(
+            S0Pair(
+                case_id=case.case_id,
+                anchor=case.anchor,
+                call_counts=_tally([c.name for c in prefix]),
+                invocations_observed=len(prefix),
+                benign_call=benign_call,
+                attack_call=attack_call,
+            )
+        )
+    return pairs, counts
+
+
 def _coarsen_anchor(anchor: SessionAuthorization) -> SessionAuthorization:
     """§7's AgentDojo coarse-anchor requirement: force allowed_effects to
     ALL_EFFECTS before pooling into any A4 gate or arms comparison."""
