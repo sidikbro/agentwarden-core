@@ -11,17 +11,33 @@ reason, rather than approximating a substitute.
 """
 from __future__ import annotations
 
-from . import agentdojo as _agentdojo
+from . import agent_security_bench as _agent_security_bench
+from . import agentharm as _agentharm
 from . import aseval as _aseval
 from . import injecagent as _injecagent
 from . import stac as _stac
 
 REGISTRY = {
     "STAC": _stac.load_stac,
-    "AgentDojo": _agentdojo.load_agentdojo,
     "ASEval": _aseval.load_aseval,
     "InjecAgent": _injecagent.load_injecagent,
+    "AgentHarm": _agentharm.load_agentharm,
+    "AgentSecurityBench": _agent_security_bench.load_agent_security_bench,
 }
+
+# AgentDojo's loader imports the `agentdojo` package at module level
+# (benchmark/a4/agentdojo_adapter.py), which is an optional dependency
+# (pyproject.toml's `benchmarks` extra) not installed in every environment
+# this registry gets imported from (e.g. the `agentwarden-gpu` conda env,
+# used for arm 1's local-model runs, has no need for AgentDojo). A missing
+# optional dependency must not break every other benchmark's loader --
+# caught here, not left to crash the whole package import.
+try:
+    from . import agentdojo as _agentdojo
+
+    REGISTRY["AgentDojo"] = _agentdojo.load_agentdojo
+except ImportError:
+    pass
 
 # Investigated for this audit but NOT registered -- each is gated, requires
 # live execution with no static labeled actions to extract, or (Adaptive
@@ -45,3 +61,7 @@ REGISTRY = {
 #     Also: STAC's own 483 cases already draw 390 from SHADE-Arena, so even
 #     a future live-execution run against it would not be independent of
 #     the STAC row above.
+#   - ToolSword (arXiv:2402.10753) -- obtainable, but 330/470 items have no
+#     recorded tool call at all, and the other 140 record only an innocuous,
+#     user-requested call (the "harm" is in a synthetic injected tool
+#     *response*, not the call) -- no static benign-vs-attack call pair.

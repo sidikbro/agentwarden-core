@@ -149,6 +149,35 @@ def tool_matched_negative_fraction(records: list[AuditRecord]) -> dict[str, Any]
     return {"n_tasks_total": len(by_task), "n_tasks_eligible": eligible, "n_tasks_matched": matched}
 
 
+def tool_matched_subset(records: list[AuditRecord]) -> list[AuditRecord]:
+    """The confound-controlled subset: records belonging to a tool-matched
+    task (`tool_matched_negative_fraction`'s "matched" tasks), restricted
+    further to only the actions whose tool name is one of the SHARED
+    tools for that task (present on both the benign and attack side).
+    Tool identity cannot trivially separate benign/attack within this
+    subset by construction -- every tool name included appears on both
+    labels somewhere in its own task. Mirrors the discipline
+    `benchmark/a4/s0_inputs.py::build_stac_matched_s0_pairs` already
+    applied to STAC specifically (restrict to the literally-reused tool),
+    generalized to any benchmark/task structure.
+
+    Does NOT itself guarantee the subset's attack/benign balance matches
+    the full set's -- callers must check that separately (a balance shift
+    would confound a before/after comparison on this subset)."""
+    by_task: dict[str, dict[str, set[str]]] = {}
+    for r in records:
+        slot = by_task.setdefault(r.task_id, {"benign": set(), "attack": set()})
+        slot[r.label].add(r.tool_name)
+
+    shared_tools_by_task: dict[str, set[str]] = {}
+    for task_id, tools in by_task.items():
+        shared = tools["benign"] & tools["attack"]
+        if shared:
+            shared_tools_by_task[task_id] = shared
+
+    return [r for r in records if r.task_id in shared_tools_by_task and r.tool_name in shared_tools_by_task[r.task_id]]
+
+
 def run_audit(benchmark: str, records: list[AuditRecord]) -> dict[str, Any]:
     labels_all = [r.label for r in records]
     n_benign = labels_all.count("benign")

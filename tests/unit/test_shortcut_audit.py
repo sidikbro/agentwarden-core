@@ -9,6 +9,7 @@ from benchmark.a4.shortcut_audit import (
     run_audit,
     tool_identity_scores,
     tool_matched_negative_fraction,
+    tool_matched_subset,
 )
 
 
@@ -50,6 +51,23 @@ def test_tool_matched_negative_fraction_finds_shared_tool_per_task():
     ]
     result = tool_matched_negative_fraction(records)
     assert result == {"n_tasks_total": 3, "n_tasks_eligible": 2, "n_tasks_matched": 1}
+
+
+def test_tool_matched_subset_keeps_only_shared_tool_actions():
+    records = [
+        # task A: "x" is shared (both benign and attack) -- kept; "z" is
+        # benign-only within A -- dropped even though A is a matched task.
+        AuditRecord("TEST", "A", "x", {}, "benign"),
+        AuditRecord("TEST", "A", "z", {}, "benign"),
+        AuditRecord("TEST", "A", "x", {}, "attack"),
+        # task B: no shared tool -- nothing kept.
+        AuditRecord("TEST", "B", "x", {}, "benign"),
+        AuditRecord("TEST", "B", "y", {}, "attack"),
+    ]
+    subset = tool_matched_subset(records)
+    assert len(subset) == 2
+    assert all(r.task_id == "A" and r.tool_name == "x" for r in subset)
+    assert {r.label for r in subset} == {"benign", "attack"}
 
 
 def test_run_audit_skips_when_below_min_rows_per_class():
