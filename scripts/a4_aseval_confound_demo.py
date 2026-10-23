@@ -14,10 +14,23 @@ object identity, not a second independent run -- generation is
 deterministic (greedy decode, temperature 0) so this is equivalent to,
 and half the cost of, scoring the subset a second time.
 
-Arm 0 IS fit independently on each set (full vs. subset), since its CV
-logistic regression's one-hot feature space depends on which tool names
-are present -- reusing one fit across both would not be the same
-question as "what can tool identity alone do on this specific set."
+Arm 0 and the literature-style content classifier are BOTH fit
+independently on each set (full vs. subset), since each one's CV feature
+space (one-hot tool names for arm 0, a TF-IDF vocabulary for the content
+classifier) depends on which text is present in that set -- reusing one
+fit across both would not be the same question as "what can this
+representation do on this specific set."
+
+The literature-style monitor (`benchmark/a4/shortcut_audit.py::
+content_classifier_scores`) is a TF-IDF+LR classifier fit, out-of-fold,
+on the FULL serialized action (`tool_name` + `arguments`) -- "a
+discriminative classifier over the full action representation," the
+construction standard practice in this literature actually uses, not
+arm 0's deliberately narrow tool-identity-only feature set. Its action
+text includes `tool_name` as one token among others, so it is free to
+use tool identity if that is the strongest signal available -- whether
+its performance also collapses on the matched subset is the open
+empirical question this script answers, not assumed either way.
 
 Also reports both sets' own attack/benign balance, since a balance
 shift between them would confound a before/after comparison (checked,
@@ -42,7 +55,14 @@ from typing import Any
 
 from benchmark.a4.audit_loaders.aseval import load_aseval
 from benchmark.a4.d2_runner import DEFAULT_ADAPTER_DIR, run_d2_classifier_batched, score_from_decision
-from benchmark.a4.shortcut_audit import TARGET_FAR, AuditRecord, tool_identity_scores, tool_matched_subset, tpr_at_far
+from benchmark.a4.shortcut_audit import (
+    TARGET_FAR,
+    AuditRecord,
+    content_classifier_scores,
+    tool_identity_scores,
+    tool_matched_subset,
+    tpr_at_far,
+)
 
 
 def _balance(records: list[AuditRecord]) -> dict[str, Any]:
@@ -81,6 +101,19 @@ def main() -> None:
     subset_r0 = tpr_at_far(subset_labels0, subset_scores0, TARGET_FAR)
     print(f"  matched subset: AUC={subset_r0['auc']:.3f}  TPR@FAR={subset_r0['tpr_at_target_far']:.3f}\n")
 
+    print("=== Literature-style monitor: TF-IDF+LR over the full action representation, fit independently on each set ===")
+    full_labels_c, full_scores_c = content_classifier_scores(full)
+    full_rc = tpr_at_far(full_labels_c, full_scores_c, TARGET_FAR)
+    print(f"  full set:       AUC={full_rc['auc']:.3f}  TPR@FAR={full_rc['tpr_at_target_far']:.3f}")
+
+    subset_labels_c, subset_scores_c = content_classifier_scores(subset)
+    subset_rc = tpr_at_far(subset_labels_c, subset_scores_c, TARGET_FAR)
+    print(f"  matched subset: AUC={subset_rc['auc']:.3f}  TPR@FAR={subset_rc['tpr_at_target_far']:.3f}")
+    print(
+        f"  drop:           AUC {full_rc['auc'] - subset_rc['auc']:+.3f}   "
+        f"TPR@FAR {full_rc['tpr_at_target_far'] - subset_rc['tpr_at_target_far']:+.3f}\n"
+    )
+
     print("=== Arm 1 (per-step D2 classifier, zero-shot, scored once on the full set) ===")
     items = [(r.tool_name, r.arguments) for r in full]
     raw = run_d2_classifier_batched(items, adapter_dir=args.adapter_dir, batch_size=args.batch_size)
@@ -109,6 +142,7 @@ def main() -> None:
         "subset_balance": subset_balance,
         "n_subset_tasks": len({r.task_id for r in subset}),
         "arm0": {"full": full_r0, "subset": subset_r0},
+        "content_classifier": {"full": full_rc, "subset": subset_rc},
         "arm1": {"full": full_r1, "subset": subset_r1, "n_parse_failures": n_parse_fail},
     }
     if args.json_out:

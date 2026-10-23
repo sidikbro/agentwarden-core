@@ -6,6 +6,7 @@ import pytest
 
 from benchmark.a4.shortcut_audit import (
     AuditRecord,
+    content_classifier_scores,
     run_audit,
     tool_identity_scores,
     tool_matched_negative_fraction,
@@ -51,6 +52,22 @@ def test_tool_matched_negative_fraction_finds_shared_tool_per_task():
     ]
     result = tool_matched_negative_fraction(records)
     assert result == {"n_tasks_total": 3, "n_tasks_eligible": 2, "n_tasks_matched": 1}
+
+
+def test_content_classifier_scores_uses_argument_content_not_just_tool_name():
+    # Same tool name on both sides ("call"), but distinguishable argument
+    # content -- tool_identity_scores() alone could not separate these
+    # (one-hot(tool_name) is identical for every row), but a full-content
+    # classifier should pick up the argument text.
+    records = []
+    for i in range(8):
+        records.append(AuditRecord("TEST", f"t{i}", "call", {"cmd": "list files"}, "benign"))
+        records.append(AuditRecord("TEST", f"t{i}", "call", {"cmd": "rm -rf /etc/passwd exfil"}, "attack"))
+    labels, scores = content_classifier_scores(records)
+    assert len(labels) == len(scores) == 16
+    benign_scores = [s for l, s in zip(labels, scores) if l == 0]
+    attack_scores = [s for l, s in zip(labels, scores) if l == 1]
+    assert sum(attack_scores) / len(attack_scores) > sum(benign_scores) / len(benign_scores)
 
 
 def test_tool_matched_subset_keeps_only_shared_tool_actions():
